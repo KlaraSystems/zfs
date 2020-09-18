@@ -334,6 +334,24 @@ extern const char *zpool_prop_to_name(zpool_prop_t);
 extern const char *zpool_prop_values(zpool_prop_t);
 
 /*
+ * Functions to manage vdev properties
+ */
+extern int zpool_get_vdev_prop_value(nvlist_t *, vdev_prop_t, char *, char *,
+    size_t, zprop_source_t *, boolean_t);
+extern int zpool_get_vdev_prop(zpool_handle_t *, const char *, vdev_prop_t,
+    char *, char *, size_t, zprop_source_t *, boolean_t);
+extern int zpool_get_all_vdev_props(zpool_handle_t *, const char *,
+    nvlist_t **);
+extern int zpool_set_vdev_prop(zpool_handle_t *, const char *, const char *,
+    const char *);
+
+extern const char *vdev_prop_to_name(vdev_prop_t);
+extern const char *vdev_prop_values(vdev_prop_t);
+extern boolean_t vdev_prop_user(const char *name);
+extern const char *vdev_prop_column_name(vdev_prop_t);
+extern boolean_t vdev_prop_align_right(vdev_prop_t);
+
+/*
  * Pool health statistics.
  */
 typedef enum {
@@ -545,6 +563,8 @@ typedef struct zprop_list {
 extern int zfs_expand_proplist(zfs_handle_t *, zprop_list_t **, boolean_t,
     boolean_t);
 extern void zfs_prune_proplist(zfs_handle_t *, uint8_t *);
+extern int vdev_expand_proplist(zpool_handle_t *, const char *,
+    zprop_list_t **);
 
 #define	ZFS_MOUNTPOINT_NONE	"none"
 #define	ZFS_MOUNTPOINT_LEGACY	"legacy"
@@ -559,7 +579,8 @@ extern void zfs_prune_proplist(zfs_handle_t *, uint8_t *);
 /*
  * zpool property management
  */
-extern int zpool_expand_proplist(zpool_handle_t *, zprop_list_t **, boolean_t);
+extern int zpool_expand_proplist(zpool_handle_t *, zprop_list_t **,
+    zfs_type_t, boolean_t);
 extern int zpool_prop_get_feature(zpool_handle_t *, const char *, char *,
     size_t);
 extern const char *zpool_prop_default_string(zpool_prop_t);
@@ -590,6 +611,12 @@ typedef enum {
 /*
  * Functions for printing zfs or zpool properties
  */
+typedef struct vdev_cbdata {
+	int cb_name_flags;
+	char **cb_names;
+	unsigned int cb_names_count;
+} vdev_cbdata_t;
+
 typedef struct zprop_get_cbdata {
 	int cb_sources;
 	zfs_get_column_t cb_columns[ZFS_GET_NCOLS];
@@ -599,6 +626,7 @@ typedef struct zprop_get_cbdata {
 	boolean_t cb_first;
 	zprop_list_t *cb_proplist;
 	zfs_type_t cb_type;
+	vdev_cbdata_t cb_vdevs;
 } zprop_get_cbdata_t;
 
 void zprop_print_one_property(const char *, zprop_get_cbdata_t *,

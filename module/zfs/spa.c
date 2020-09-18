@@ -539,6 +539,11 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 
 		switch (prop) {
 		case ZPOOL_PROP_INVAL:
+			if (zpool_prop_vdev(propname)) {
+				/* XXX: Allan: todo */
+printf("ALLAN: spa_prop_validate TODO: %s\n", propname);
+				break;
+			}
 			if (!zpool_prop_feature(propname)) {
 				error = SET_ERROR(EINVAL);
 				break;
@@ -776,10 +781,13 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 			continue;
 
 		if (prop == ZPOOL_PROP_VERSION || prop == ZPOOL_PROP_INVAL) {
-			uint64_t ver;
+			uint64_t ver = 0;
 
 			if (prop == ZPOOL_PROP_VERSION) {
 				VERIFY(nvpair_value_uint64(elem, &ver) == 0);
+			} else if (zpool_prop_vdev(nvpair_name(elem))) {
+				/* XXX: Allan: todo */
+printf("ALLAN: spa_prop_set TODO: %s\n", nvpair_name(elem));
 			} else {
 				ASSERT(zpool_prop_feature(nvpair_name(elem)));
 				ver = SPA_VERSION_FEATURES;
@@ -8631,6 +8639,11 @@ spa_sync_props(void *arg, dmu_tx_t *tx)
 
 		switch (prop = zpool_name_to_prop(nvpair_name(elem))) {
 		case ZPOOL_PROP_INVAL:
+			if (zpool_prop_vdev(nvpair_name(elem))) {
+				/* XXX: Allan: todo */
+printf("ALLAN: spa_sync_props TODO: %s\n", nvpair_name(elem));
+				break;
+			}
 			/*
 			 * We checked this earlier in spa_prop_validate().
 			 */

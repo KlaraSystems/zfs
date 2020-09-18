@@ -137,6 +137,10 @@ int lzc_wait_fs(const char *, zfs_wait_activity_t, boolean_t *);
 
 int lzc_set_bootenv(const char *, const nvlist_t *);
 int lzc_get_bootenv(const char *, nvlist_t **);
+
+int lzc_get_vdev_prop(const char *, nvlist_t *, nvlist_t **);
+int lzc_set_vdev_prop(const char *, nvlist_t *, nvlist_t **);
+
 #ifdef	__cplusplus
 }
 #endif

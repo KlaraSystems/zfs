@@ -100,6 +100,13 @@ zprop_type_t zpool_prop_get_type(zpool_prop_t);
 zprop_desc_t *zpool_prop_get_table(void);
 
 /*
+ * vdev property functions
+ */
+void vdev_prop_init(void);
+zprop_type_t vdev_prop_get_type(vdev_prop_t prop);
+zprop_desc_t *vdev_prop_get_table(void);
+
+/*
  * Common routines to initialize property tables
  */
 void zprop_register_impl(int, const char *, zprop_type_t, uint64_t,
@@ -125,6 +132,7 @@ uint64_t zprop_random_value(int, uint64_t, zfs_type_t);
 const char *zprop_values(int, zfs_type_t);
 size_t zprop_width(int, boolean_t *, zfs_type_t);
 boolean_t zprop_valid_for_type(int, zfs_type_t, boolean_t);
+int zprop_valid_char(char c);
 
 #ifdef	__cplusplus
 }
