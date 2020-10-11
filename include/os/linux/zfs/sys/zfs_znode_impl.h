@@ -83,15 +83,30 @@ extern "C" {
 #define	zhold(zp)	VERIFY3P(igrab(ZTOI((zp))), !=, NULL)
 #define	zrele(zp)	iput(ZTOI((zp)))
 
+#define	zfsvfs_is_unmounted(zfsvfs)				\
+	((zfsvfs)->z_unmounted && (zfsvfs)->z_force_unmounted)
+
 /* Called on entry to each ZFS inode and vfs operation. */
 static inline int
 zfs_enter(zfsvfs_t *zfsvfs, const char *tag)
 {
 	ZFS_TEARDOWN_ENTER_READ(zfsvfs, tag);
-	if (unlikely(zfsvfs->z_unmounted)) {
+	if (unlikely(zfsvfs_is_unmounted(zfsvfs)) {
 		ZFS_TEARDOWN_EXIT_READ(zfsvfs, tag);
 		return (SET_ERROR(EIO));
 	}
+	return (0);
+}
+
+/* ZFS_ENTER but ok with forced unmount having begun */
+static inline int
+zfs_enter_unmountok(zfsvfs_t *zfsvfs, const char *tag)
+{
+	rrm_enter_read(&(zfsvfs)->z_teardown_lock, FTAG);
+	if ((zfsvfs)->z_unmounted == B_TRUE) {
+		ZFS_EXIT(zfsvfs);
+		return (SET_ERROR(EIO));
+	}							
 	return (0);
 }
 
