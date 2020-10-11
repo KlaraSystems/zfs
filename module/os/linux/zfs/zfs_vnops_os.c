@@ -208,7 +208,7 @@ zfs_close(struct inode *ip, int flag, cred_t *cr)
 	zfsvfs_t *zfsvfs = ITOZSB(ip);
 	int error;
 
-	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
+	if ((error = zfs_enter_unmountok_verify_zp(zfsvfs, zp, FTAG)) != 0)
 		return (error);
 
 	/* Decrement the synchronous opens in the znode */
@@ -1648,7 +1648,7 @@ zfs_getattr_fast(struct user_namespace *user_ns, struct inode *ip,
 	u_longlong_t nblocks;
 	int error;
 
-	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
+	if ((error = zfs_enter_unmountok_verify_zp(zfsvfs, zp, FTAG)) != 0)
 		return (error);
 
 	mutex_enter(&zp->z_lock);

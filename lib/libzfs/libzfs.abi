@@ -2033,7 +2033,7 @@
     <typedef-decl name='__uint32_t' type-id='f0981eeb' id='62f1140c'/>
     <typedef-decl name='__uint64_t' type-id='7359adad' id='8910171f'/>
     <typedef-decl name='size_t' type-id='7359adad' id='b59d7dce'/>
-    <class-decl name='libzfs_handle' size-in-bits='18240' is-struct='yes' visibility='default' id='c8a9d9d8'>
+    <class-decl name='libzfs_handle' size-in-bits='18304' is-struct='yes' visibility='default' id='c8a9d9d8'>
       <data-member access='public' layout-offset-in-bits='0'>
         <var-decl name='libzfs_error' type-id='95e97e5e' visibility='default'/>
       </data-member>
@@ -2090,6 +2090,9 @@
       </data-member>
       <data-member access='public' layout-offset-in-bits='18176'>
         <var-decl name='libfetch_load_error' type-id='26a90f95' visibility='default'/>
+      </data-member>
+      <data-member access='public' layout-offset-in-bits='18240'>
+        <var-decl name='libzfs_force_export' type-id='c19b74c3' visibility='default'/>
       </data-member>
     </class-decl>
     <class-decl name='zfs_handle' size-in-bits='4928' is-struct='yes' visibility='default' id='f6ee4445'>
@@ -3922,7 +3925,8 @@
       <enumerator name='ZPOOL_STATUS_NON_NATIVE_ASHIFT' value='29'/>
       <enumerator name='ZPOOL_STATUS_COMPATIBILITY_ERR' value='30'/>
       <enumerator name='ZPOOL_STATUS_INCOMPATIBLE_FEAT' value='31'/>
-      <enumerator name='ZPOOL_STATUS_OK' value='32'/>
+      <enumerator name='ZPOOL_STATUS_FORCE_EXPORTING' value='32'/>
+      <enumerator name='ZPOOL_STATUS_OK' value='33'/>
     </enum-decl>
     <typedef-decl name='zpool_status_t' type-id='5e770b40' id='d3dd6294'/>
     <enum-decl name='zpool_errata' id='d9abbf54'>
@@ -4598,6 +4602,10 @@
     <pointer-type-def type-id='7a842a6b' size-in-bits='64' id='07ee4a58'/>
     <pointer-type-def type-id='8a70a786' size-in-bits='64' id='5507783b'/>
     <pointer-type-def type-id='b1e62775' size-in-bits='64' id='f095e320'/>
+    <function-decl name='libpc_error_description' mangled-name='libpc_error_description' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='libpc_error_description'>
+      <parameter type-id='5507783b' name='hdl'/>
+      <return type-id='80f4b756'/>
+    </function-decl>
     <function-decl name='zpool_read_label' mangled-name='zpool_read_label' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zpool_read_label'>
       <parameter type-id='95e97e5e' name='fd'/>
       <parameter type-id='857bb57e' name='config'/>
