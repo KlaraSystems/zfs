@@ -115,6 +115,7 @@ cols = {
     "l2asize":    [7, 1024, "Actual (compressed) size of the L2ARC"],
     "l2size":     [6, 1024, "Size of the L2ARC"],
     "l2bytes":    [7, 1024, "Bytes read per second from the L2ARC"],
+    "anon":       [4, 1024, "ARC Anonymous size"],
     "grow":       [4, 1000, "ARC grow disabled"],
     "need":       [4, 1024, "ARC reclaim need"],
     "free":       [4, 1024, "ARC free memory"],
@@ -509,6 +510,7 @@ def calculate():
         v["l2data%"] = 100 * v["l2data"] // v["l2asize"]
         v["l2meta%"] = 100 * v["l2meta"] // v["l2asize"]
 
+    v["anon"] = cur["anon_size"]
     v["grow"] = 0 if cur["arc_no_grow"] else 1
     v["need"] = cur["arc_need_free"]
     v["free"] = cur["memory_free_bytes"]
