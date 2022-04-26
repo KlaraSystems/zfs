@@ -599,6 +599,11 @@ zpool_feature_init(void)
 	    "org.openzfs:draid", "draid", "Support for distributed spare RAID",
 	    ZFEATURE_FLAG_MOS, ZFEATURE_TYPE_BOOLEAN, NULL);
 
+	zfeature_register(SPA_FEATURE_HEAD_ERRLOG,
+	    "com.delphix:head_errlog", "head_errlog",
+	    "Support for per-dataset on-disk error logs.",
+	    ZFEATURE_FLAG_ACTIVATE_ON_ENABLE, ZFEATURE_TYPE_BOOLEAN, NULL);
+
 	{
 	static const spa_feature_t slack_deps[] = {
 		SPA_FEATURE_EXTENSIBLE_DATASET,
