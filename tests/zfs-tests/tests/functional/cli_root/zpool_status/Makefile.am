@@ -6,4 +6,5 @@ dist_pkgdata_SCRIPTS = \
 	zpool_status_002_pos.ksh \
 	zpool_status_003_pos.ksh \
 	zpool_status_004_pos.ksh \
+	zpool_status_005_pos.ksh \
 	zpool_status_features_001_pos.ksh
