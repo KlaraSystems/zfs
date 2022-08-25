@@ -31,6 +31,7 @@
 #include <sys/spa_impl.h>
 #include <sys/vdev.h>
 #include <sys/vdev_impl.h>
+#include <sys/zap.h>
 #include <sys/zio.h>
 #include <sys/zio_checksum.h>
 
@@ -198,6 +199,34 @@ recent_events_compare(const void *a, const void *b)
 		return (cmp);
 
 	return (0);
+}
+
+/*
+ * workaround: vdev properties don't have inheritance
+ */
+static uint64_t
+vdev_prop_get_inherited(vdev_t *vd, vdev_prop_t prop)
+{
+	uint64_t propval;
+
+	switch (prop) {
+		case VDEV_PROP_CHECKSUM_N:
+			propval = vd->vdev_checksum_n;
+			break;
+		case VDEV_PROP_CHECKSUM_T:
+			propval = vd->vdev_checksum_t;
+			break;
+		default:
+			break;
+	}
+
+	if (propval != vdev_prop_default_numeric(prop))
+		return (propval);
+
+	if (vd->vdev_parent == NULL)
+		return (vdev_prop_default_numeric(prop));
+
+	return (vdev_prop_get_inherited(vd->vdev_parent, prop));
 }
 
 static void zfs_ereport_schedule_cleaner(void);
@@ -660,6 +689,26 @@ zfs_ereport_start(nvlist_t **ereport_out, nvlist_t **detector_out,
 		    DATA_TYPE_INT64, zb->zb_level,
 		    FM_EREPORT_PAYLOAD_ZFS_ZIO_BLKID,
 		    DATA_TYPE_UINT64, zb->zb_blkid, NULL);
+	}
+
+	/*
+	 * Payload for tuning the zed
+	 */
+	if (spa->spa_load_state == SPA_LOAD_NONE && vd != NULL &&
+	    strcmp(subclass, FM_EREPORT_ZFS_CHECKSUM) == 0) {
+		if (vd->vdev_top_zap != 0 || vd->vdev_leaf_zap != 0) {
+			fm_payload_set(ereport,
+			    FM_EREPORT_PAYLOAD_ZFS_VDEV_CKSUM_N,
+			    DATA_TYPE_UINT64,
+			    vdev_prop_get_inherited(vd, VDEV_PROP_CHECKSUM_N),
+			    NULL);
+			fm_payload_set(ereport,
+			    FM_EREPORT_PAYLOAD_ZFS_VDEV_CKSUM_T,
+			    DATA_TYPE_UINT64,
+			    vdev_prop_get_inherited(vd, VDEV_PROP_CHECKSUM_T),
+			    NULL);
+		}
+
 	}
 
 	mutex_exit(&spa->spa_errlist_lock);
