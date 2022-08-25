@@ -389,6 +389,31 @@ vdev_get_nparity(vdev_t *vd)
 	return (nparity);
 }
 
+static int
+vdev_prop_get_int(vdev_t *vd, vdev_prop_t prop, uint64_t *value)
+{
+	spa_t *spa = vd->vdev_spa;
+	objset_t *mos = spa->spa_meta_objset;
+	uint64_t objid;
+	int err;
+
+	if (vd->vdev_top_zap != 0) {
+		objid = vd->vdev_top_zap;
+	} else if (vd->vdev_leaf_zap != 0) {
+		objid = vd->vdev_leaf_zap;
+	} else {
+		return (EINVAL);
+	}
+
+	err = zap_lookup(mos, objid, vdev_prop_to_name(prop),
+	    sizeof (uint64_t), 1, value);
+
+	if (err == ENOENT)
+		*value = vdev_prop_default_numeric(prop);
+
+	return (err);
+}
+
 /*
  * Get the number of data disks for a top-level vdev.
  */
@@ -6025,28 +6050,25 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 				continue;
 			/* Numeric Properites */
 			case VDEV_PROP_ALLOCATING:
-				src = ZPROP_SRC_LOCAL;
-				strval = NULL;
-
-				err = zap_lookup(mos, objid, nvpair_name(elem),
-				    sizeof (uint64_t), 1, &intval);
-				if (err == ENOENT) {
-					intval =
-					    vdev_prop_default_numeric(prop);
-					err = 0;
-				} else if (err)
-					break;
-				if (intval == vdev_prop_default_numeric(prop))
-					src = ZPROP_SRC_DEFAULT;
-
 				/* Leaf vdevs cannot have this property */
 				if (vd->vdev_mg == NULL &&
 				    vd->vdev_top != NULL) {
 					src = ZPROP_SRC_NONE;
 					intval = ZPROP_BOOLEAN_NA;
+				} else {
+					err = vdev_prop_get_int(vd, prop,
+					    &intval);
+					if (err && err != ENOENT)
+						break;
+
+					if (intval ==
+					    vdev_prop_default_numeric(prop))
+						src = ZPROP_SRC_DEFAULT;
+					else
+						src = ZPROP_SRC_LOCAL;
 				}
 
-				vdev_prop_add_list(outnvl, propname, strval,
+				vdev_prop_add_list(outnvl, propname, NULL,
 				    intval, src);
 				break;
 			case VDEV_PROP_FAILFAST:
