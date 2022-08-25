@@ -40,6 +40,13 @@
 #include "fmd_api.h"
 
 /*
+ * Default values for the serd engine when processing checksum errors. The
+ * semantics are N <events> in T <seconds>.
+ */
+#define	DEFAULT_CHECKSUM_N	10	/* events */
+#define	DEFAULT_CHECKSUM_T	600	/* seconds */
+
+/*
  * Our serd engines are named 'zfs_<pool_guid>_<vdev_guid>_{checksum,io}'.  This
  * #define reserves enough space for two 64-bit hex values plus the length of
  * the longest string.
@@ -448,6 +455,7 @@ zfs_fm_recv(fmd_hdl_t *hdl, fmd_event_t *ep, nvlist_t *nvl, const char *class)
 	zfs_case_t *zcp, *dcp;
 	int32_t pool_state;
 	uint64_t ena, pool_guid, vdev_guid;
+	uint64_t checksum_n, checksum_t;
 	er_timeval_t pool_load;
 	er_timeval_t er_when;
 	nvlist_t *detector;
@@ -813,12 +821,32 @@ zfs_fm_recv(fmd_hdl_t *hdl, fmd_event_t *ep, nvlist_t *nvl, const char *class)
 			}
 
 			if (zcp->zc_data.zc_serd_checksum[0] == '\0') {
+				if (nvlist_lookup_uint64(nvl,
+				    FM_EREPORT_PAYLOAD_ZFS_VDEV_CKSUM_N,
+				    &checksum_n) != 0) {
+					checksum_n = UINT64_MAX;
+				}
+				if (nvlist_lookup_uint64(nvl,
+				    FM_EREPORT_PAYLOAD_ZFS_VDEV_CKSUM_T,
+				    &checksum_t) != 0) {
+					checksum_t = UINT64_MAX;
+				}
+				/*
+				 * UINT64_MAX is the default value of the
+				 * checksum_* vdev properties to represent a
+				 * 'none' value.
+				 */
+				if (checksum_n == UINT64_MAX)
+					checksum_n = DEFAULT_CHECKSUM_N;
+				if (checksum_t == UINT64_MAX)
+					checksum_t = DEFAULT_CHECKSUM_T;
+
 				zfs_serd_name(zcp->zc_data.zc_serd_checksum,
 				    pool_guid, vdev_guid, "checksum");
 				fmd_serd_create(hdl,
 				    zcp->zc_data.zc_serd_checksum,
-				    fmd_prop_get_int32(hdl, "checksum_N"),
-				    fmd_prop_get_int64(hdl, "checksum_T"));
+				    checksum_n,
+				    SEC2NSEC(checksum_t));
 				zfs_case_serialize(zcp);
 			}
 			if (fmd_serd_record(hdl,
