@@ -1304,8 +1304,14 @@ top_of_function:
 	/*
 	 * If this transaction will result in a net free of space,
 	 * we want to let it through.
+	 *
+	 * We don't verify quota for the ZVOL, as the quota mechanism
+	 * is not implemented currently for ZVOLs.
+	 * The quota size is actuall the size of the ZVOL.
+	 * The ZVOL size quota is already implied by the size of the volume.
 	 */
-	if (ignorequota || netfree || dsl_dir_phys(dd)->dd_quota == 0)
+	if (ignorequota || netfree || dsl_dir_phys(dd)->dd_quota == 0 ||
+	    dmu_objset_type(tx->tx_objset) == DMU_OST_ZVOL)
 		quota = UINT64_MAX;
 	else
 		quota = dsl_dir_phys(dd)->dd_quota;
@@ -1377,10 +1383,9 @@ top_of_function:
 		ignorequota = (dsl_dir_phys(dd)->dd_head_dataset_obj == 0);
 		first = B_FALSE;
 		goto top_of_function;
-
-	} else {
-		return (0);
 	}
+
+	return (0);
 }
 
 /*
