@@ -1262,6 +1262,7 @@ dsl_dir_tempreserve_impl(dsl_dir_t *dd, uint64_t asize, boolean_t netfree,
 	uint64_t quota;
 	struct tempreserve *tr;
 	int retval;
+	uint64_t ext_quota;
 	uint64_t ref_rsrv;
 
 top_of_function:
@@ -1326,7 +1327,6 @@ top_of_function:
 	 * we're very close to full, this will allow a steady trickle of
 	 * removes to get through.
 	 */
-	uint64_t deferred = 0;
 	if (dd->dd_parent == NULL) {
 		uint64_t avail = dsl_pool_unreserved_space(dd->dd_pool,
 		    (netfree) ?
@@ -1344,10 +1344,27 @@ top_of_function:
 	 * on-disk is over quota and there are no pending changes (which
 	 * may free up space for us).
 	 */
-	if (used_on_disk + est_inflight >= quota) {
-		if (est_inflight > 0 || used_on_disk < quota ||
-		    (retval == ENOSPC && used_on_disk < quota + deferred))
-			retval = ERESTART;
+	ext_quota = quota >> 5;
+	if (quota == UINT64_MAX)
+		ext_quota = 0;
+
+	if (used_on_disk >= quota) {
+		/* Quota exceeded */
+		mutex_exit(&dd->dd_lock);
+		DMU_TX_STAT_BUMP(dmu_tx_quota);
+		return (retval);
+	} else if (used_on_disk + est_inflight >= quota + ext_quota) {
+		if (est_inflight > 0 || used_on_disk < quota) {
+			retval = SET_ERROR(ERESTART);
+		} else {
+			ASSERT3U(used_on_disk, >=, quota);
+
+			if (retval == ENOSPC && (used_on_disk - quota) <
+			    dsl_pool_deferred_space(dd->dd_pool)) {
+				retval = SET_ERROR(ERESTART);
+			}
+		}
+
 		dprintf_dd(dd, "failing: used=%lluK inflight = %lluK "
 		    "quota=%lluK tr=%lluK err=%d\n",
 		    (u_longlong_t)used_on_disk>>10,
