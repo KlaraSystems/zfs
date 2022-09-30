@@ -126,7 +126,7 @@ typedef int bvec_iterator_t;
 #endif
 
 static inline void
-bio_set_flags_failfast(struct block_device *bdev, int *flags)
+bio_set_flags_failfast_impl(struct block_device *bdev, int *flags, int mask)
 {
 #ifdef CONFIG_BUG
 	/*
@@ -148,7 +148,13 @@ bio_set_flags_failfast(struct block_device *bdev, int *flags)
 #endif /* BLOCK_EXT_MAJOR */
 #endif /* CONFIG_BUG */
 
-	*flags |= REQ_FAILFAST_MASK;
+	*flags |= mask;
+}
+
+static inline void
+bio_set_flags_failfast(struct block_device *bdev, int *flags)
+{
+	bio_set_flags_failfast_impl(bdev, flags, REQ_FAILFAST_MASK);
 }
 
 /*

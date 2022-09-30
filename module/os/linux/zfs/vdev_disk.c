@@ -659,8 +659,10 @@ __vdev_disk_physio(struct block_device *bdev, zio_t *zio,
 retry:
 	dr = vdev_disk_dio_alloc(bio_count);
 
-	if (zio && !(zio->io_flags & (ZIO_FLAG_IO_RETRY | ZIO_FLAG_TRYHARD)))
+	if (zio && !(zio->io_flags & (ZIO_FLAG_IO_RETRY | ZIO_FLAG_TRYHARD)) &&
+	    zio->io_vd_failfast == B_TRUE) {
 		bio_set_flags_failfast(bdev, &flags);
+	}
 
 	dr->dr_zio = zio;
 
