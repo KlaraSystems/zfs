@@ -91,7 +91,7 @@ static inline int
 zfs_enter(zfsvfs_t *zfsvfs, const char *tag)
 {
 	ZFS_TEARDOWN_ENTER_READ(zfsvfs, tag);
-	if (unlikely(zfsvfs_is_unmounted(zfsvfs)) {
+	if (unlikely(zfsvfs_is_unmounted(zfsvfs))) {
 		ZFS_TEARDOWN_EXIT_READ(zfsvfs, tag);
 		return (SET_ERROR(EIO));
 	}
