@@ -210,7 +210,7 @@ zfs_close(struct inode *ip, int flag, cred_t *cr)
 
 	if ((error = zfs_enter_unmountok(zfsvfs, FTAG)) != 0)
 		return (error);
-	
+
 	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
 		return (error);
 
