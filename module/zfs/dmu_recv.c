@@ -367,10 +367,8 @@ recv_own(dsl_pool_t *dp, dmu_tx_t *tx, uint64_t dsobj, ds_hold_flags_t dsflags,
 }
 
 static void
-recv_disown(dsl_dataset_t *ds, dmu_recv_cookie_t *drc)
+recv_disown(dsl_dataset_t *ds, ds_hold_flags_t dsflags, dmu_recv_cookie_t *drc)
 {
-	ds_hold_flags_t dsflags = (drc->drc_raw) ? 0 : DS_HOLD_FLAG_DECRYPT;
-
 	ASSERT3P(ds->ds_receiver, ==, drc);
 	ds->ds_receiver = NULL;
 	dsl_dataset_disown(ds, dsflags, drc);
@@ -2680,12 +2678,12 @@ dmu_recv_cleanup_ds(dmu_recv_cookie_t *drc)
 	if (drc->drc_resumable && drc->drc_should_save &&
 	    !BP_IS_HOLE(dsl_dataset_get_blkptr(ds))) {
 		rrw_exit(&ds->ds_bp_rwlock, FTAG);
-		recv_disown(ds, drc);
+		recv_disown(ds, dsflags, drc);
 	} else {
 		char name[ZFS_MAX_DATASET_NAME_LEN];
 		rrw_exit(&ds->ds_bp_rwlock, FTAG);
 		dsl_dataset_name(ds, name);
-		recv_disown(ds, drc);
+		recv_disown(ds, dsflags, drc);
 		if (!drc->drc_heal)
 			(void) dsl_destroy_head(name);
 	}
@@ -3768,7 +3766,9 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 		(void) spa_keystore_remove_mapping(dmu_tx_pool(tx)->dp_spa,
 		    drc->drc_ds->ds_object, drc->drc_ds);
 	}
-	recv_disown(drc->drc_ds, drc);
+	ds_hold_flags_t dsflags = (drc->drc_raw) ?
+	    DS_HOLD_FLAG_NONE : DS_HOLD_FLAG_DECRYPT;
+	recv_disown(drc->drc_ds, dsflags, drc);
 	drc->drc_ds = NULL;
 }
 

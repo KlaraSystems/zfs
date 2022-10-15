@@ -1643,13 +1643,8 @@ zfs_getattr_fast(struct user_namespace *user_ns, struct inode *ip,
 	u_longlong_t nblocks;
 	int error;
 
-<<<<<<< HEAD
-	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
+	if ((error = zfs_enter_unmountok_verify_zp(zfsvfs, zp, FTAG)) != 0)
 		return (error);
-=======
-	ZFS_ENTER_UNMOUNTOK(zfsvfs);
-	ZFS_VERIFY_ZP(zp);
->>>>>>> zfs: support force exporting pools
 
 	mutex_enter(&zp->z_lock);
 

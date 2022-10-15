@@ -537,7 +537,7 @@ spa_config_enter(spa_t *spa, int locks, const void *tag, krw_t rw)
 }
 
 int
-spa_config_tryenter(spa_t *spa, int locks, void *tag, krw_t rw)
+spa_config_tryenter(spa_t *spa, int locks, const void *tag, krw_t rw)
 {
 
 	return (spa_config_enter_flags(spa, locks, tag, rw,
@@ -907,7 +907,7 @@ spa_open_ref(spa_t *spa, const void *tag)
  * notifying the exporter if one is registered, when minref has been reached.
  */
 static void
-spa_close_common(spa_t *spa, void *tag)
+spa_close_common(spa_t *spa, const void *tag)
 {
 	if (zfs_refcount_remove(&spa->spa_refcount, tag) == spa->spa_minref) {
 		mutex_enter(&spa->spa_evicting_os_lock);

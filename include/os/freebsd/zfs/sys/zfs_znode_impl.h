@@ -126,12 +126,14 @@ static inline int
 zfs_enter(zfsvfs_t *zfsvfs, const char *tag)
 {
 	ZFS_TEARDOWN_ENTER_READ(zfsvfs, tag);
-	if (__predict_false((zfsvfs)->z_unmounted)) {
+	if (unlikely((zfsvfs)->z_unmounted == B_TRUE)) {
 		ZFS_TEARDOWN_EXIT_READ(zfsvfs, tag);
 		return (SET_ERROR(EIO));
 	}
 	return (0);
 }
+
+#define	zfs_enter_unmountok	zfs_enter
 
 /* Must be called before exiting the vop */
 static inline void

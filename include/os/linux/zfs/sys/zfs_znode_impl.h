@@ -102,11 +102,11 @@ zfs_enter(zfsvfs_t *zfsvfs, const char *tag)
 static inline int
 zfs_enter_unmountok(zfsvfs_t *zfsvfs, const char *tag)
 {
-	rrm_enter_read(&(zfsvfs)->z_teardown_lock, FTAG);
-	if ((zfsvfs)->z_unmounted == B_TRUE) {
-		ZFS_EXIT(zfsvfs);
+	ZFS_TEARDOWN_ENTER_READ(zfsvfs, tag);
+	if (unlikely((zfsvfs)->z_unmounted == B_TRUE)) {
+		ZFS_TEARDOWN_EXIT_READ(zfsvfs, tag);
 		return (SET_ERROR(EIO));
-	}							
+	}
 	return (0);
 }
 
