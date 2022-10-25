@@ -197,6 +197,7 @@ zfs_open(struct inode *ip, int mode, int flag, cred_t *cr)
 		atomic_inc_32(&zp->z_sync_cnt);
 
 	zfs_exit(zfsvfs, FTAG);
+	META_STAT_BUMP(zfsvfs->z_kstat, "meta_open_count");
 	return (0);
 }
 

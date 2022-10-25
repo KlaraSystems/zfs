@@ -51,8 +51,40 @@ static dataset_kstat_values_t empty_dataset_kstats = {
 	{ "zil_itx_metaslab_normal_bytes",	KSTAT_DATA_UINT64 },
 	{ "zil_itx_metaslab_slog_count",	KSTAT_DATA_UINT64 },
 	{ "zil_itx_metaslab_slog_bytes",	KSTAT_DATA_UINT64 }
+	},
+	{
+	{ "meta_open_count",				KSTAT_DATA_UINT64 },
+	{ "meta_stat_count",				KSTAT_DATA_UINT64 },
+	{ "meta_mkdir_count",				KSTAT_DATA_UINT64 },
 	}
 };
+
+static void
+meta_sums_init(meta_sums_t *ms)
+{
+	wmsum_init(&ms->meta_open_count, 0);
+	wmsum_init(&ms->meta_stat_count, 0);
+	wmsum_init(&ms->meta_mkdir_count, 0);
+}
+
+static void
+meta_sums_fini(meta_sums_t *ms)
+{
+	wmsum_fini(&ms->meta_open_count);
+	wmsum_fini(&ms->meta_stat_count);
+	wmsum_fini(&ms->meta_mkdir_count);
+}
+
+static void
+meta_kstat_values_update(meta_kstat_values_t *ms, meta_sums_t *meta_sums)
+{
+	ms->meta_open_count.value.ui64 =
+	    wmsum_value(&meta_sums->meta_open_count);
+	ms->meta_stat_count.value.ui64 =
+	    wmsum_value(&meta_sums->meta_stat_count);
+	ms->meta_mkdir_count.value.ui64 =
+	    wmsum_value(&meta_sums->meta_mkdir_count);
+}
 
 static int
 dataset_kstats_update(kstat_t *ksp, int rw)
@@ -78,6 +110,7 @@ dataset_kstats_update(kstat_t *ksp, int rw)
 	    wmsum_value(&dk->dk_sums.dss_nunlinked);
 
 	zil_kstat_values_update(&dkv->dkv_zil_stats, &dk->dk_zil_sums);
+	meta_kstat_values_update(&dkv->dkv_meta_stats, &dk->dk_meta_sums);
 
 	return (0);
 }
@@ -161,6 +194,7 @@ dataset_kstats_create(dataset_kstats_t *dk, objset_t *objset)
 	wmsum_init(&dk->dk_sums.dss_nunlinks, 0);
 	wmsum_init(&dk->dk_sums.dss_nunlinked, 0);
 	zil_sums_init(&dk->dk_zil_sums);
+	meta_sums_init(&dk->dk_meta_sums);
 
 	dk->dk_kstats = kstat;
 	kstat_install(kstat);
@@ -187,6 +221,7 @@ dataset_kstats_destroy(dataset_kstats_t *dk)
 	wmsum_fini(&dk->dk_sums.dss_nunlinks);
 	wmsum_fini(&dk->dk_sums.dss_nunlinked);
 	zil_sums_fini(&dk->dk_zil_sums);
+	meta_sums_fini(&dk->dk_meta_sums);
 }
 
 void
