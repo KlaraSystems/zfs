@@ -53,9 +53,9 @@ static dataset_kstat_values_t empty_dataset_kstats = {
 	{ "zil_itx_metaslab_slog_bytes",	KSTAT_DATA_UINT64 }
 	},
 	{
-	{ "meta_open_count",				KSTAT_DATA_UINT64 },
-	{ "meta_stat_count",				KSTAT_DATA_UINT64 },
-	{ "meta_mkdir_count",				KSTAT_DATA_UINT64 },
+	{ "meta_open_count",			KSTAT_DATA_UINT64 },
+	{ "meta_stat_count",			KSTAT_DATA_UINT64 },
+	{ "meta_mkdir_count",			KSTAT_DATA_UINT64 },
 	}
 };
 

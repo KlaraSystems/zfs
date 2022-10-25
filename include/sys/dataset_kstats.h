@@ -89,10 +89,10 @@ typedef struct dataset_kstats {
 	kstat_t *dk_kstats;
 } dataset_kstats_t;
 
-#define	META_STAT_BUMP(kstat, stat) \
+#define	META_STAT_BUMP(kstats, stat) \
 	do { \
-		if ((kstat)->dk_meta_sums) \
-			wmsum_add(&((kstat)->dk_meta_sums->stat), 1); \
+		if (kstats.dk_meta_sums) \
+			wmsum_add(kstats.dk_meta_sums.stat, 1); \
 	} while (0)
 
 int dataset_kstats_create(dataset_kstats_t *, objset_t *);
