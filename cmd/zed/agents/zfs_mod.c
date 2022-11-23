@@ -833,8 +833,10 @@ zfs_deliver_add(nvlist_t *nvl)
 	/*
 	 * Expecting a devid string and an optional physical location and guid
 	 */
-	if (nvlist_lookup_string(nvl, DEV_IDENTIFIER, &devid) != 0) {
-		zed_log_msg(LOG_INFO, "%s: no dev identifier\n", __func__);
+	if (nvlist_lookup_string(nvl, DEV_IDENTIFIER, &devid) != 0 &&
+	    !nvlist_exists(nvl, ZFS_EV_VDEV_GUID)) {
+		zed_log_msg(LOG_INFO, "%s: no dev identifier or vdev_guid\n",
+		    __func__);
 		return (-1);
 	}
 
@@ -845,7 +847,7 @@ zfs_deliver_add(nvlist_t *nvl)
 	is_slice = (nvlist_lookup_boolean(nvl, DEV_IS_PART) == 0);
 
 	zed_log_msg(LOG_INFO, "zfs_deliver_add: adding %s (%s) (is_slice %d)",
-	    devid, devpath ? devpath : "NULL", is_slice);
+	    devid ? devid : "NULL", devpath ? devpath : "NULL", is_slice);
 
 	/*
 	 * Iterate over all vdevs looking for a match in the following order:
@@ -855,7 +857,7 @@ zfs_deliver_add(nvlist_t *nvl)
 	 * 4. ZPOOL_CONFIG_PATH for /dev/disk/by-vdev devices only (since
 	 *    by-vdev paths represent physical paths).
 	 */
-	if (devid_iter(devid, zfs_process_add, is_slice))
+	if (devid != NULL && devid_iter(devid, zfs_process_add, is_slice))
 		return (0);
 	if (devpath != NULL && devphys_iter(devpath, devid, zfs_process_add,
 	    is_slice))

@@ -283,15 +283,16 @@ zed_udev_monitor(void *arg)
 		 * Special case:
 		 * NVMe devices don't have ID_BUS set (at least on RHEL 7-8),
 		 * but they are valid for autoreplace.  Add a special case for
-		 * them by searching for "/nvme/" in the udev DEVPATH:
+		 * them by searching for "/nvme" in the udev DEVPATH:
 		 *
 		 * DEVPATH=/devices/pci0000:00/0000:00:1e.0/nvme/nvme2/nvme2n1
+		 * DEVPATH=/devices/virtual/nvme-subsystem/nvme-subsys0/nvme0n1/nvme0n1p1
 		 */
 		bus = udev_device_get_property_value(dev, "ID_BUS");
 		uuid = udev_device_get_property_value(dev, "DM_UUID");
 		devpath = udev_device_get_devpath(dev);
 		if (!is_zfs && (bus == NULL && uuid == NULL &&
-		    strstr(devpath, "/nvme/") == NULL)) {
+		    strstr(devpath, "/nvme") == NULL)) {
 			zed_log_msg(LOG_INFO, "zed_udev_monitor: %s no devid "
 			    "source", udev_device_get_devnode(dev));
 			udev_device_unref(dev);

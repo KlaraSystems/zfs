@@ -75,7 +75,9 @@
 #endif
 #include <blkid/blkid.h>
 
-#define	DEV_BYID_PATH	"/dev/disk/by-id/"
+#define	DEV_BYID_PATH			"/dev/disk/by-id/"
+#define	DEV_NVME			"/dev/nvme"
+#define	UDEV_SUBSYS_NVME		"nvme"
 
 /*
  * Skip devices with well known prefixes:
@@ -431,15 +433,22 @@ zfs_device_get_devid(struct udev_device *dev, char *bufptr, size_t buflen)
 
 		/*
 		 * NVME 'by-id' symlinks are similar to bus case
+		 * NVMe over Fabric may not match subsystem=nvme
 		 */
-		struct udev_device *parent;
+		const char *subsystem = NULL;
+		const char *devnode = NULL;
 
-		parent = udev_device_get_parent_with_subsystem_devtype(dev,
-		    "nvme", NULL);
-		if (parent != NULL)
+		subsystem = udev_device_get_subsystem(dev);
+		devnode = udev_device_get_devnode(dev);
+		if (subsystem != NULL && strncmp(subsystem, UDEV_SUBSYS_NVME,
+		    sizeof(UDEV_SUBSYS_NVME)) == 0) {
 			bus = "nvme";	/* continue with bus symlink search */
-		else
+		} else if (devnode != NULL &&
+		    strncmp(devnode, DEV_NVME, strlen(DEV_NVME)) == 0) {
+			bus = "nvme";	/* continue with bus symlink search */
+		} else {
 			return (ENODATA);
+		}
 	}
 
 	/*
