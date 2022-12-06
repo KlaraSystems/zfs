@@ -520,8 +520,20 @@ zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
 		info->zbc_has_cksum = 1;
 	}
 
-	if (!ZIO_CHECKSUM_EQUAL(actual_cksum, expected_cksum))
+	if (!ZIO_CHECKSUM_EQUAL(actual_cksum, expected_cksum)) {
+		cmn_err(CE_WARN, "KLARA: checksum failed!"
+		    "expected_cksum=%llx:%llx:%llx:%llx "
+		    "actual_cksum=%llx:%llx:%llx:%llx\n",
+		    (u_longlong_t)expected_cksum.zc_word[0],
+		    (u_longlong_t)expected_cksum.zc_word[1],
+		    (u_longlong_t)expected_cksum.zc_word[2],
+		    (u_longlong_t)expected_cksum.zc_word[3],
+		    (u_longlong_t)actual_cksum.zc_word[0],
+		    (u_longlong_t)actual_cksum.zc_word[1],
+		    (u_longlong_t)actual_cksum.zc_word[2],
+		    (u_longlong_t)actual_cksum.zc_word[3]);
 		return (SET_ERROR(ECKSUM));
+	}
 
 	return (0);
 }

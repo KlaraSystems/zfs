@@ -1765,10 +1765,43 @@ vdev_raidz_checksum_error(zio_t *zio, raidz_col_t *rc, abd_t *bad_data)
 	    zio->io_priority != ZIO_PRIORITY_REBUILD) {
 		zio_bad_cksum_t zbc;
 		raidz_map_t *rm = zio->io_vsd;
+		blkptr_t *bp = zio->io_bp;
+		uint_t checksum = (bp == NULL ? zio->io_prop.zp_checksum :
+		    (BP_IS_GANG(bp) ? ZIO_CHECKSUM_GANG_HEADER :
+		    BP_GET_CHECKSUM(bp)));
+		uint64_t size = (bp == NULL ? zio->io_size :
+		    (BP_IS_GANG(bp) ? SPA_GANGBLOCKSIZE : BP_GET_PSIZE(bp)));
+		zio_checksum_info_t *ci = &zio_checksum_table[checksum];
+		zio_cksum_t actual_cksum, expected_cksum;
+		int byteswap;
 
-		zbc.zbc_has_cksum = 0;
-		zbc.zbc_injected = rm->rm_ecksuminjected;
+		if (!(ci->ci_flags & ZCHECKSUM_FLAG_EMBEDDED)) {
+			byteswap = BP_SHOULD_BYTESWAP(bp);
+			expected_cksum = bp->blk_cksum;
+			ci->ci_func[byteswap](bad_data, size,
+			    NULL, &actual_cksum);
+			zbc.zbc_expected = expected_cksum;
+			zbc.zbc_actual = actual_cksum;
+			zbc.zbc_checksum_name = ci->ci_name;
+			zbc.zbc_byteswapped = byteswap;
+			zbc.zbc_injected = rm->rm_ecksuminjected;
+			zbc.zbc_has_cksum = 1;
 
+			cmn_err(CE_WARN, "KLARA: checksum failed!"
+			    "expected_cksum=%llx:%llx:%llx:%llx "
+			    "actual_cksum=%llx:%llx:%llx:%llx\n",
+			    (u_longlong_t)expected_cksum.zc_word[0],
+			    (u_longlong_t)expected_cksum.zc_word[1],
+			    (u_longlong_t)expected_cksum.zc_word[2],
+			    (u_longlong_t)expected_cksum.zc_word[3],
+			    (u_longlong_t)actual_cksum.zc_word[0],
+			    (u_longlong_t)actual_cksum.zc_word[1],
+			    (u_longlong_t)actual_cksum.zc_word[2],
+			    (u_longlong_t)actual_cksum.zc_word[3]);
+		} else {
+			zbc.zbc_has_cksum = 0;
+			zbc.zbc_injected = rm->rm_ecksuminjected;
+		}
 		mutex_enter(&vd->vdev_stat_lock);
 		vd->vdev_stat.vs_checksum_errors++;
 		mutex_exit(&vd->vdev_stat_lock);
