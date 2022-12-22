@@ -570,7 +570,7 @@ json_data(char *buf, size_t size, void *data)
 	loadtimes[1] = spa->spa_loaded_ts.tv_nsec;
 	fnvlist_add_uint64_array(nvl, ZPOOL_CONFIG_LOADED_TIME, loadtimes, 2);
 	fnvlist_add_uint64(nvl, ZPOOL_CONFIG_ERRCOUNT,
-	    spa_get_errlog_size(spa));
+	    spa_approx_errlog_size(spa));
 	fnvlist_add_boolean_value(nvl, "is_suspended", spa_suspended(spa));
 	fnvlist_add_uint64(nvl, ZPOOL_CONFIG_SUSPENDED, spa->spa_failmode);
 	fnvlist_add_uint64(nvl, ZPOOL_CONFIG_SUSPENDED_REASON,

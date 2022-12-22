@@ -6027,7 +6027,7 @@ spa_get_stats(const char *name, nvlist_t **config,
 
 			VERIFY(nvlist_add_uint64(*config,
 			    ZPOOL_CONFIG_ERRCOUNT,
-			    spa_get_errlog_size(spa)) == 0);
+			    spa_approx_errlog_size(spa)) == 0);
 
 			if (spa_suspended(spa)) {
 				VERIFY(nvlist_add_uint64(*config,
