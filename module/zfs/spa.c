@@ -8690,6 +8690,10 @@ spa_sync_config_object(spa_t *spa, dmu_tx_t *tx)
 		    DMU_OTN_ZAP_METADATA, DMU_POOL_DIRECTORY_OBJECT,
 		    DMU_POOL_VDEV_ZAP_MAP, tx);
 	}
+	if (spa->spa_root_vdev_zap == 0) {
+		spa->spa_root_vdev_zap = zap_create(spa->spa_meta_objset,
+		    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
+	}
 	spa->spa_avz_action = AVZ_ACTION_NONE;
 
 	/* Create ZAPs for vdevs that don't have them. */

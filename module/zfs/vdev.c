@@ -865,6 +865,14 @@ vdev_alloc(spa_t *spa, vdev_t **vdp, nvlist_t *nv, vdev_t *parent, uint_t id,
 	(void) nvlist_lookup_uint64(nv, ZPOOL_CONFIG_CREATE_TXG,
 	    &vd->vdev_crtxg);
 
+	if (vd->vdev_ops == &vdev_root_ops &&
+	    (alloctype == VDEV_ALLOC_LOAD ||
+	    alloctype == VDEV_ALLOC_SPLIT ||
+	    alloctype == VDEV_ALLOC_ROOTPOOL)) {
+		(void) nvlist_lookup_uint64(nv,
+		    ZPOOL_CONFIG_VDEV_ROOT_ZAP, &spa->spa_root_vdev_zap);
+	}
+
 	/*
 	 * If we're a top-level vdev, try to load the allocation parameters.
 	 */
@@ -5596,7 +5604,9 @@ vdev_props_set_sync(void *arg, dmu_tx_t *tx)
 		/*
 		 * Set vdev property values in the vdev props mos object.
 		 */
-		if (vd->vdev_top_zap != 0) {
+		if (vd == spa->spa_root_vdev && spa->spa_root_vdev_zap != 0) {
+			objid = spa->spa_root_vdev_zap;
+		} else if (vd->vdev_top_zap != 0) {
 			objid = vd->vdev_top_zap;
 		} else if (vd->vdev_leaf_zap != 0) {
 			objid = vd->vdev_leaf_zap;
@@ -5776,7 +5786,9 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 
 	nvlist_lookup_nvlist(innvl, ZPOOL_VDEV_PROPS_GET_PROPS, &nvprops);
 
-	if (vd->vdev_top_zap != 0) {
+	if (vd == spa->spa_root_vdev && spa->spa_root_vdev_zap != 0) {
+		objid = spa->spa_root_vdev_zap;
+	} else if (vd->vdev_top_zap != 0) {
 		objid = vd->vdev_top_zap;
 	} else if (vd->vdev_leaf_zap != 0) {
 		objid = vd->vdev_leaf_zap;

@@ -568,6 +568,11 @@ vdev_config_generate(spa_t *spa, vdev_t *vd, boolean_t getstats,
 			    vd->vdev_top_zap);
 		}
 
+		if (vd == spa->spa_root_vdev && spa->spa_root_vdev_zap != 0) {
+			fnvlist_add_uint64(nv, ZPOOL_CONFIG_VDEV_ROOT_ZAP,
+					spa->spa_root_vdev_zap);
+		}
+
 		if (vd->vdev_resilver_deferred) {
 			ASSERT(vd->vdev_ops->vdev_op_leaf);
 			ASSERT(spa->spa_resilver_deferred);
