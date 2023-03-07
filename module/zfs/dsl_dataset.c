@@ -678,13 +678,13 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, const void *tag,
 
 		if ((err = dsl_deadlist_open(&ds->ds_deadlist,
 		    mos, dsl_dataset_phys(ds)->ds_deadlist_obj)) != 0)
-			return (err);
+			goto after_dsl_bookmark_fini;
 		uint64_t remap_deadlist_obj =
 		    dsl_dataset_get_remap_deadlist_object(ds);
 		if (remap_deadlist_obj != 0) {
 			if ((err = dsl_deadlist_open(&ds->ds_remap_deadlist, mos,
 			    remap_deadlist_obj)) != 0)
-				return (err);
+				goto after_dsl_bookmark_fini;
 		}
 
 		dmu_buf_init_user(&ds->ds_dbu, dsl_dataset_evict_sync,
