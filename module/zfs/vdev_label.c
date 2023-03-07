@@ -839,6 +839,13 @@ retry:
 			}
 		}
 
+		if (config == NULL && zfs_recover) {
+			vdev_dbgmsg(vd, "using label even though it is newer "
+			    "than txg! (%llu > %llu)", (u_longlong_t)label_txg,
+			    (u_longlong_t)txg);
+			nvlist_free(config);
+			config = fnvlist_dup(label);
+		}
 		if (label != NULL) {
 			nvlist_free(label);
 			label = NULL;
