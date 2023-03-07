@@ -64,10 +64,6 @@ spl_panic(const char *file, const char *func, int line, const char *fmt, ...)
 
 	printk(KERN_EMERG "%s", msg);
 	printk(KERN_EMERG "PANIC at %s:%d:%s()\n", newfile, line, func);
-	if (zfs_recover) {
-		spl_dumpstack();
-		return;
-	}
 	if (spl_panic_halt)
 		panic("%s", msg);
 
