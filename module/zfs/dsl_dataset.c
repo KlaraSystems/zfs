@@ -380,7 +380,8 @@ load_zfeature(objset_t *mos, dsl_dataset_t *ds, spa_feature_t f)
 		if (err == 0) {
 			ds->ds_feature[f] = (void *)B_TRUE;
 		} else {
-			ASSERT3U(err, ==, ENOENT);
+			if (!zfs_recover)
+				ASSERT3U(err, ==, ENOENT);
 			err = 0;
 		}
 		break;

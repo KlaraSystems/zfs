@@ -74,7 +74,8 @@ extern void spl_dumpstack(void);
 static inline int
 spl_assert(const char *buf, const char *file, const char *func, int line)
 {
-	spl_panic(file, func, line, "%s", buf);
+	if (!zfs_recover)
+		spl_panic(file, func, line, "%s", buf);
 	return (0);
 }
 
