@@ -295,7 +295,7 @@ dsl_deadlist_iterate(dsl_deadlist_t *dl, deadlist_iter_t func, void *args)
 	}
 }
 
-void
+int
 dsl_deadlist_open(dsl_deadlist_t *dl, objset_t *os, uint64_t object)
 {
 	int err;
@@ -307,8 +307,9 @@ dsl_deadlist_open(dsl_deadlist_t *dl, objset_t *os, uint64_t object)
 	dl->dl_os = os;
 	dl->dl_object = object;
 	err = dmu_bonus_hold(os, object, dl, &dl->dl_dbuf);
-	if (err != 0 && zfs_recover)
-		return;
+	if (err != 0) {
+		return (err);
+	}
 	VERIFY0(err);
 	dmu_object_info_from_db(dl->dl_dbuf, &doi);
 	if (doi.doi_type == DMU_OT_BPOBJ) {
@@ -316,13 +317,15 @@ dsl_deadlist_open(dsl_deadlist_t *dl, objset_t *os, uint64_t object)
 		dl->dl_dbuf = NULL;
 		dl->dl_oldfmt = B_TRUE;
 		VERIFY0(bpobj_open(&dl->dl_bpobj, os, object));
-		return;
+		return (0);
 	}
 
 	dl->dl_oldfmt = B_FALSE;
 	dl->dl_phys = dl->dl_dbuf->db_data;
 	dl->dl_havetree = B_FALSE;
 	dl->dl_havecache = B_FALSE;
+
+	return (0);
 }
 
 boolean_t
@@ -684,7 +687,8 @@ dsl_deadlist_regenerate(objset_t *os, uint64_t dlobj,
 	dsl_deadlist_t dl = { 0 };
 	dsl_pool_t *dp = dmu_objset_pool(os);
 
-	dsl_deadlist_open(&dl, os, dlobj);
+	if (dsl_deadlist_open(&dl, os, dlobj) != 0)
+		return;
 	if (dl.dl_oldfmt) {
 		dsl_deadlist_close(&dl);
 		return;

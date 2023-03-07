@@ -2311,7 +2311,8 @@ dsl_dir_livelist_open(dsl_dir_t *dd, uint64_t obj)
 	objset_t *mos = dd->dd_pool->dp_meta_objset;
 	ASSERT(spa_feature_is_active(dd->dd_pool->dp_spa,
 	    SPA_FEATURE_LIVELIST));
-	dsl_deadlist_open(&dd->dd_livelist, mos, obj);
+	if (dsl_deadlist_open(&dd->dd_livelist, mos, obj) != 0)
+		return;
 	bplist_create(&dd->dd_pending_allocs);
 	bplist_create(&dd->dd_pending_frees);
 }
