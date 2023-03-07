@@ -298,6 +298,7 @@ dsl_deadlist_iterate(dsl_deadlist_t *dl, deadlist_iter_t func, void *args)
 void
 dsl_deadlist_open(dsl_deadlist_t *dl, objset_t *os, uint64_t object)
 {
+	int err;
 	dmu_object_info_t doi;
 
 	ASSERT(!dsl_deadlist_is_open(dl));
@@ -305,7 +306,10 @@ dsl_deadlist_open(dsl_deadlist_t *dl, objset_t *os, uint64_t object)
 	mutex_init(&dl->dl_lock, NULL, MUTEX_DEFAULT, NULL);
 	dl->dl_os = os;
 	dl->dl_object = object;
-	VERIFY0(dmu_bonus_hold(os, object, dl, &dl->dl_dbuf));
+	err = dmu_bonus_hold(os, object, dl, &dl->dl_dbuf);
+	if (err != 0 && zfs_recover)
+		return;
+	VERIFY0(err);
 	dmu_object_info_from_db(dl->dl_dbuf, &doi);
 	if (doi.doi_type == DMU_OT_BPOBJ) {
 		dmu_buf_rele(dl->dl_dbuf, dl);
