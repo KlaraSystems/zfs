@@ -4845,7 +4845,8 @@ dsl_dataset_get_remap_deadlist_object(dsl_dataset_t *ds)
 	    &remap_deadlist_obj);
 
 	if (err != 0) {
-		VERIFY3S(err, ==, ENOENT);
+		if (!zfs_recover)
+			VERIFY3S(err, ==, ENOENT);
 		return (0);
 	}
 
