@@ -1842,7 +1842,7 @@ dsl_scan_recurse(dsl_scan_t *scn, dsl_dataset_t *ds, dmu_objset_type_t ostype,
 	if (dnp != NULL &&
 	    dnp->dn_bonuslen > DN_MAX_BONUS_LEN(dnp)) {
 		scn->scn_phys.scn_errors++;
-		spa_log_error(dp->dp_spa, zb);
+		spa_log_error(dp->dp_spa, zb, &bp->blk_birth);
 		return (SET_ERROR(EINVAL));
 	}
 
@@ -1931,6 +1931,14 @@ dsl_scan_recurse(dsl_scan_t *scn, dsl_dataset_t *ds, dmu_objset_type_t ostype,
 			    DMU_USERUSED_OBJECT, tx);
 		}
 		arc_buf_destroy(buf, &buf);
+	} else if (!zfs_blkptr_verify(dp->dp_spa, bp, B_FALSE, BLK_VERIFY_LOG)) {
+		/*
+		 * Sanity check the block pointer contents, this is handled
+		 * by arc_read() for the cases above.
+		 */
+		scn->scn_phys.scn_errors++;
+		spa_log_error(dp->dp_spa, zb, &bp->blk_birth);
+		return (SET_ERROR(EINVAL));
 	}
 
 	return (0);
@@ -3553,6 +3561,29 @@ dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 	 */
 	if (spa_sync_pass(spa) > 1)
 		return;
+
+	/*
+	 * Check for scn_restart_txg before checking spa_load_state, so
+	 * that we can restart an old-style scan while the pool is being
+	 * imported (see dsl_scan_init). We also restart scans if there
+	 * is a deferred resilver and the user has manually disabled
+	 * deferred resilvers via the tunable.
+	 */
+	if (dsl_scan_restarting(scn, tx) ||
+	    (spa->spa_resilver_deferred && zfs_resilver_disable_defer)) {
+		setup_sync_arg_t setup_sync_arg = {
+			.func = POOL_SCAN_SCRUB,
+			.txgstart = 0,
+			.txgend = 0,
+		};
+		dsl_scan_done(scn, B_FALSE, tx);
+		if (vdev_resilver_needed(spa->spa_root_vdev, NULL, NULL))
+			setup_sync_arg.func = POOL_SCAN_RESILVER;
+		zfs_dbgmsg("restarting scan func=%u on %s txg=%llu",
+		    setup_sync_arg.func, dp->dp_spa->spa_name,
+		    (longlong_t)tx->tx_txg);
+		dsl_scan_setup_sync(&setup_sync_arg, tx);
+	}
 
 	/*
 	 * If the spa is shutting down, then stop scanning. This will
