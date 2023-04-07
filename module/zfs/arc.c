@@ -2038,6 +2038,20 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, const zbookmark_phys_t *zb,
 	 * further transforms on it.
 	 */
 	if (encrypted) {
+		if (hdr->b_crypt_hdr.b_rabd == NULL) {
+			cmn_err(CE_WARN, "KLARA: arc_buf_fill() hdr "
+			    "rabd is NULL! compress=%d encrypted=%d "
+			    "psize=%d lsize=%d objset=%ld object=%ld "
+			    "iopro=%d hdrempty=%d hdrlock=%d refcount=%ld\n",
+			    arc_hdr_get_compress(hdr), encrypted,
+			    HDR_GET_PSIZE(hdr), HDR_GET_LSIZE(hdr),
+			    zb->zb_objset, zb->zb_object, hdr->b_flags,
+			    HDR_IO_IN_PROGRESS(hdr),
+			    HDR_EMPTY(hdr),
+			    MUTEX_HELD(HDR_LOCK(hdr)),
+			    zfs_refcount_count(&hdr->b_l1hdr.b_refcnt));
+			return (ECKSUM);
+		}
 		ASSERT(HDR_HAS_RABD(hdr));
 		abd_copy_to_buf(buf->b_data, hdr->b_crypt_hdr.b_rabd,
 		    HDR_GET_PSIZE(hdr));
@@ -2084,6 +2098,17 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, const zbookmark_phys_t *zb,
 		if (HDR_ENCRYPTED(hdr) && ARC_BUF_ENCRYPTED(buf)) {
 			ASSERT3U(hdr->b_crypt_hdr.b_ot, ==, DMU_OT_DNODE);
 
+			if (hdr->b_l1hdr.b_pabd == NULL) {
+				cmn_err(CE_WARN, "KLARA: arc_buf_fill() "
+				    "in-place dnode but pabd is NULL! "
+				    "compress=%d encrypted=%d "
+				    "psize=%d lsize=%d objset=%ld object=%ld\n",
+				    arc_hdr_get_compress(hdr), encrypted,
+				    HDR_GET_PSIZE(hdr), HDR_GET_LSIZE(hdr),
+				    zb->zb_objset, zb->zb_object);
+				return (EACCES);
+			}
+
 			if (hash_lock != NULL)
 				mutex_enter(hash_lock);
 			arc_buf_untransform_in_place(buf);
@@ -2099,6 +2124,14 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, const zbookmark_phys_t *zb,
 
 	if (hdr_compressed == compressed) {
 		if (!arc_buf_is_shared(buf)) {
+			if (hdr->b_l1hdr.b_pabd == NULL) {
+				cmn_err(CE_WARN, "KLARA: arc_buf_fill() hdr "
+				    "pabd is NULL! compress=%d encrypted=%d "
+				    "psize=%d lsize=%d objset=%ld object=%ld\n",
+				    arc_hdr_get_compress(hdr), encrypted,
+				    HDR_GET_PSIZE(hdr), HDR_GET_LSIZE(hdr),
+				    zb->zb_objset, zb->zb_object);
+			}
 			abd_copy_to_buf(buf->b_data, hdr->b_l1hdr.b_pabd,
 			    arc_buf_size(buf));
 		}
@@ -2780,6 +2813,11 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, const zbookmark_phys_t *zb,
 	 * hold the hash_lock or be undiscoverable.
 	 */
 	ASSERT(HDR_EMPTY_OR_LOCKED(hdr));
+	if (!HDR_EMPTY_OR_LOCKED(hdr)) {
+		cmn_err(CE_WARN, "KLARA: arc_buf_alloc_impl() without "
+		    "HDR_EMPTY_OR_LOCKED. empty=%d locked=%d",
+		    HDR_EMPTY(hdr), MUTEX_HELD(HDR_LOCK(hdr)));
+	}
 
 	/*
 	 * Only honor requests for compressed bufs if the hdr is actually
@@ -3212,6 +3250,11 @@ arc_hdr_alloc_abd(arc_buf_hdr_t *hdr, int alloc_flags)
 	IMPLY(alloc_rdata, HDR_PROTECTED(hdr));
 
 	if (alloc_rdata) {
+		if (HDR_PROTECTED(hdr) == B_FALSE) {
+			cmn_err(CE_WARN, "KLARA: arc_hdr_alloc_abd() "
+			    "asked to alloc rabd on a not-encrypted HDR\n");
+		}
+		ASSERT(HDR_PROTECTED(hdr));
 		size = HDR_GET_PSIZE(hdr);
 		ASSERT3P(hdr->b_crypt_hdr.b_rabd, ==, NULL);
 		hdr->b_crypt_hdr.b_rabd = arc_get_data_abd(hdr, size, hdr,
@@ -3316,8 +3359,13 @@ arc_hdr_alloc(uint64_t spa, int32_t psize, int32_t lsize,
 	arc_hdr_set_flags(hdr, arc_bufc_to_flags(type) | ARC_FLAG_HAS_L1HDR);
 	arc_hdr_set_compress(hdr, compression_type);
 	hdr->b_complevel = complevel;
-	if (protected)
+	if (protected) {
 		arc_hdr_set_flags(hdr, ARC_FLAG_PROTECTED);
+		if (hdr->b_crypt_hdr.b_rabd != NULL) {
+			cmn_err(CE_WARN, "KLARA: arc_hdr_alloc() but rabd is"
+			    "not NULL\n");
+		}
+	}
 
 	hdr->b_l1hdr.b_state = arc_anon;
 	hdr->b_l1hdr.b_arc_access = 0;
@@ -6859,8 +6907,15 @@ arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
 		VERIFY3P(buf->b_data, !=, NULL);
 	}
 
-	if (HDR_HAS_RABD(hdr))
-		arc_hdr_free_abd(hdr, B_TRUE);
+	if (HDR_HAS_RABD(hdr)) {
+		if (HDR_IO_IN_PROGRESS(hdr)) {
+			cmn_err(CE_WARN, "KLARA: arc_write() tried to free an "
+			    "rABD while IO was in progress refcount=%ld",
+			    zfs_refcount_count(&hdr->b_l1hdr.b_refcnt));
+		} else {
+			arc_hdr_free_abd(hdr, B_TRUE);
+		}
+	}
 
 	if (!(zio_flags & ZIO_FLAG_RAW))
 		arc_hdr_set_compress(hdr, ZIO_COMPRESS_OFF);
