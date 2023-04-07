@@ -3869,11 +3869,20 @@ void
 arc_buf_destroy(arc_buf_t *buf, const void *tag)
 {
 	arc_buf_hdr_t *hdr = buf->b_hdr;
+	int ref;
 
 	if (hdr->b_l1hdr.b_state == arc_anon) {
 		ASSERT3U(hdr->b_l1hdr.b_bufcnt, ==, 1);
 		ASSERT(!HDR_IO_IN_PROGRESS(hdr));
-		VERIFY0(remove_reference(hdr, tag));
+		if ((ref = remove_reference(hdr, tag)) == 0) {
+			arc_hdr_destroy(hdr);
+		} else {
+			cmn_err(CE_WARN, "KLARA: arc_buf_destroy(hdr=%p) with "
+			    "%d buffers and %d remaining references, not "
+			    "destroying header", hdr, hdr->b_l1hdr.b_bufcnt,
+			    ref);
+			arc_buf_destroy_impl(buf);
+		}
 		return;
 	}
 
