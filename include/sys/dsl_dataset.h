@@ -243,7 +243,7 @@ typedef struct dsl_dataset {
 	kmutex_t ds_sendstream_lock;
 	list_t ds_sendstreams;
 
-	void *ds_receiver;	/* really a dmu_recv_cookie_t */
+	struct dmu_recv_cookie *ds_receiver;
 
 	/*
 	 * When in the middle of a resumable receive, tracks how much
@@ -331,10 +331,10 @@ boolean_t dsl_dataset_try_add_ref(struct dsl_pool *dp, dsl_dataset_t *ds,
     void *tag);
 int dsl_dataset_create_key_mapping(dsl_dataset_t *ds);
 int dsl_dataset_hold_obj_flags(struct dsl_pool *dp, uint64_t dsobj,
-    ds_hold_flags_t flags, void *tag, dsl_dataset_t **);
+    ds_hold_flags_t flags, const void *tag, dsl_dataset_t **);
 void dsl_dataset_remove_key_mapping(dsl_dataset_t *ds);
 int dsl_dataset_hold_obj(struct dsl_pool *dp, uint64_t dsobj,
-    void *tag, dsl_dataset_t **);
+    const void *tag, dsl_dataset_t **);
 void dsl_dataset_rele_flags(dsl_dataset_t *ds, ds_hold_flags_t flags,
     void *tag);
 void dsl_dataset_rele(dsl_dataset_t *ds, void *tag);

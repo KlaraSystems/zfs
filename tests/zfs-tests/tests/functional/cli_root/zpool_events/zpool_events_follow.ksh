@@ -54,7 +54,7 @@ log_must zpool clear $TESTPOOL
 zpool_events_settle
 
 # 4. Verify 'zpool events -f' successfully recorded these new events
-EVENTS_LOG=$(cat $EVENTS_FILE | wc -l)
+EVENTS_LOG=$(wc -l < $EVENTS_FILE)
 log_must test $EVENTS_LOG -gt 0
 
 log_pass "'zpool events -f' successfully follows new events."

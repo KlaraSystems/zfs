@@ -26,7 +26,7 @@
 .\" Copyright 2017 Nexenta Systems, Inc.
 .\" Copyright (c) 2017 Open-E, Inc. All Rights Reserved.
 .\"
-.Dd February 16, 2020
+.Dd November 1, 2022
 .Dt ZPOOL-EXPORT 8
 .Os
 .
@@ -37,6 +37,7 @@
 .Nm zpool
 .Cm export
 .Op Fl f
+.Op Fl F
 .Fl a Ns | Ns Ar pool Ns …
 .
 .Sh DESCRIPTION
@@ -73,7 +74,7 @@ This option allows a pool to be exported even when the underlying disks are
 offline and the pool is unavailable.
 When force exporting a pool, any outstanding dirty data will be discarded.
 This option implies the
-.It Fl f
+.Fl f
 option.
 .El
 .

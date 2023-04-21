@@ -496,7 +496,8 @@ spa_config_enter_flags(spa_t *spa, int locks, const void *tag, krw_t rw,
 			continue;
 		mutex_enter(&scl->scl_lock);
 		if (rw == RW_READER) {
-			while (scl->scl_writer || scl->scl_write_wanted) {
+			while (scl->scl_writer ||
+			    ((flags & SCL_FLAG_MMP) && scl->scl_write_wanted)) {
 				error = spa_config_eval_flags(spa, flags);
 				if (error != 0)
 					break;
@@ -515,7 +516,6 @@ spa_config_enter_flags(spa_t *spa, int locks, const void *tag, krw_t rw,
 			if (error == 0)
 				scl->scl_writer = curthread;
 		}
-
 		if (error == 0)
 			scl->scl_count++;
 		mutex_exit(&scl->scl_lock);
@@ -540,11 +540,25 @@ spa_config_enter(spa_t *spa, int locks, const void *tag, krw_t rw)
 }
 
 int
-spa_config_tryenter(spa_t *spa, int locks, void *tag, krw_t rw)
+spa_config_tryenter(spa_t *spa, int locks, const void *tag, krw_t rw)
 {
 
 	return (spa_config_enter_flags(spa, locks, tag, rw,
 	    SCL_FLAG_TRYENTER) == 0);
+}
+
+/*
+ * The spa_config_enter_mmp() allows the mmp thread to cut in front of
+ * outstanding write lock requests. This is needed since the mmp updates are
+ * time sensitive and failure to service them promptly will result in a
+ * suspended pool. This pool suspension has been seen in practice when there is
+ * a single disk in a pool that is responding slowly and presumably about to
+ * fail.
+ */
+void
+spa_config_enter_mmp(spa_t *spa, int locks, const void *tag, krw_t rw)
+{
+	spa_config_enter_flags(spa, locks, tag, rw, SCL_FLAG_MMP);
 }
 
 void
@@ -910,7 +924,7 @@ spa_open_ref(spa_t *spa, void *tag)
  * notifying the exporter if one is registered, when minref has been reached.
  */
 static void
-spa_close_common(spa_t *spa, void *tag)
+spa_close_common(spa_t *spa, const void *tag)
 {
 	if (zfs_refcount_remove(&spa->spa_refcount, tag) == spa->spa_minref) {
 		mutex_enter(&spa->spa_evicting_os_lock);
@@ -2672,7 +2686,7 @@ spa_maxblocksize(spa_t *spa)
 boolean_t
 spa_exiting_any(spa_t *spa)
 {
-	return (spa->spa_export_initiator != NULL);
+	return (spa->spa_export_initiator != NULL || spa->spa_pre_exporting);
 }
 
 /*

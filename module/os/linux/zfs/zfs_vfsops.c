@@ -275,7 +275,11 @@ zfs_sync(struct super_block *sb, int wait, cred_t *cr)
 		 */
 		dsl_pool_t *dp;
 
-		ZFS_ENTER(zfsvfs);
+		/*
+		 * If the dataset has been unmounted, return success. We might
+		 * be force-exporting, and we don't want to start a flush if so.
+		 */
+		ZFS_ENTER_UNMOUNTOK(zfsvfs);
 		dp = dmu_objset_pool(zfsvfs->z_os);
 
 		/*
@@ -1156,7 +1160,7 @@ zfs_statvfs(struct inode *ip, struct kstatfs *statp)
 	}
 
 	ZFS_EXIT(zfsvfs);
-	return (err);
+	return(err);
 }
 
 static int

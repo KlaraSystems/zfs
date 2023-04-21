@@ -1127,7 +1127,9 @@ dsl_scan_restart_resilver(dsl_pool_t *dp, uint64_t txg)
 	} else {
 		dp->dp_scan->scn_restart_txg = txg;
 	}
-	zfs_dbgmsg("restarting resilver txg=%llu", (longlong_t)txg);
+	zfs_dbgmsg("restarting resilver for %s at txg=%llu",
+	    dp->dp_spa->spa_name, (longlong_t)txg);
+
 	return (0);
 }
 
@@ -2775,13 +2777,18 @@ dsl_scan_visit(dsl_scan_t *scn, dmu_tx_t *tx)
 		dsl_dataset_t *ds;
 		uint64_t dsobj = sds->sds_dsobj;
 		uint64_t txg = sds->sds_txg;
+		int error;
 
 		/* dequeue and free the ds from the queue */
 		scan_ds_queue_remove(scn, dsobj);
 		sds = NULL;
 
 		/* set up min / max txg */
-		VERIFY3U(0, ==, dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
+		error = dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds);
+		VERIFY(error == 0 ||
+		    (spa_exiting_any(dp->dp_spa) && error == EIO));
+		if (error != 0)
+			return;
 		if (txg != 0) {
 			scn->scn_phys.scn_cur_min_txg =
 			    MAX(scn->scn_phys.scn_min_txg, txg);

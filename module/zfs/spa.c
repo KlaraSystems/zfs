@@ -1474,6 +1474,7 @@ spa_deactivate(spa_t *spa)
 	if (spa_exiting_any(spa)) {
 		metaslab_class_force_discard(spa->spa_normal_class);
 		metaslab_class_force_discard(spa->spa_log_class);
+		metaslab_class_force_discard(spa->spa_embedded_log_class);
 		metaslab_class_force_discard(spa->spa_special_class);
 		metaslab_class_force_discard(spa->spa_dedup_class);
 	}
@@ -6471,6 +6472,27 @@ spa_tryimport(nvlist_t *tryconfig)
 	return (config);
 }
 
+int
+spa_set_pre_export_status(const char *pool, boolean_t status)
+{
+	spa_t *spa;
+
+	mutex_enter(&spa_namespace_lock);
+	if ((spa = spa_lookup(pool)) == NULL) {
+		mutex_exit(&spa_namespace_lock);
+		return (SET_ERROR(ENOENT));
+	}
+
+	mutex_enter(&spa->spa_evicting_os_lock);
+	spa->spa_pre_exporting = status;
+	if (status)
+		txg_completion_notify(spa_get_dsl(spa));
+	mutex_exit(&spa->spa_evicting_os_lock);
+
+	mutex_exit(&spa_namespace_lock);
+	return (0);
+}
+
 static void
 spa_set_export_initiator(spa_t *spa, void *initiator)
 {
@@ -6518,7 +6540,6 @@ spa_export_common(const char *pool, int new_state, nvlist_t **oldconfig,
 	}
 	spa->spa_is_exporting = B_TRUE;
 
-	/* XXX Should this be chained instead of rejected? */
 	if (spa_exiting(spa)) {
 		mutex_exit(&spa_namespace_lock);
 		return (SET_ERROR(EBUSY));
@@ -6578,7 +6599,7 @@ spa_export_common(const char *pool, int new_state, nvlist_t **oldconfig,
 	 */
 	if (!force_removal && spa->spa_sync_on) {
 		error = txg_wait_synced_tx(spa->spa_dsl_pool, 0,
-		    NULL, TXG_WAIT_F_NOSUSPEND);
+		    NULL, TXG_WAIT_F_NOSUSPEND | TXG_WAIT_F_SIGNAL);
 		if (error != 0)
 			goto fail;
 		spa_evicting_os_wait(spa);
@@ -6634,12 +6655,12 @@ spa_export_common(const char *pool, int new_state, nvlist_t **oldconfig,
 		 * committed to disk before we unload the pool.
 		 */
 		if (spa->spa_root_vdev != NULL) {
-			vdev_t *rvd = spa->spa_root_vdev;
-			vdev_initialize_stop_all(rvd, VDEV_INITIALIZE_ACTIVE);
-			vdev_trim_stop_all(rvd, VDEV_TRIM_ACTIVE);
-			vdev_autotrim_stop_all(spa);
-			vdev_rebuild_stop_all(spa);
-			l2arc_spa_rebuild_stop(spa);
+		        vdev_t *rvd = spa->spa_root_vdev;
+		        vdev_initialize_stop_all(rvd, VDEV_INITIALIZE_ACTIVE);
+		        vdev_trim_stop_all(rvd, VDEV_TRIM_ACTIVE);
+		        vdev_autotrim_stop_all(spa);
+		        vdev_rebuild_stop_all(spa);
+		        l2arc_spa_rebuild_stop(spa);
 		}
 
 		/*
@@ -8363,11 +8384,12 @@ spa_pool_space(spa_t *spa)
 	space = metaslab_class_get_space(spa_normal_class(spa));
 	space += metaslab_class_get_space(spa_special_class(spa));
 	space += metaslab_class_get_space(spa_dedup_class(spa));
+	space += metaslab_class_get_space(spa_embedded_log_class(spa));
 
 	return (space);
 }
 
-static void
+static __attribute__((noreturn)) void
 spa_async_thread(void *arg)
 {
 	spa_t *spa = (spa_t *)arg;
@@ -9543,7 +9565,8 @@ spa_sync(spa_t *spa, uint64_t txg)
 	spa_sync_iterate_to_convergence(spa, tx);
 
 #ifdef ZFS_DEBUG
-	if (!list_is_empty(&spa->spa_config_dirty_list)) {
+	if (!list_is_empty(&spa->spa_config_dirty_list) &&
+	    !spa_exiting_any(spa)) {
 	/*
 	 * Make sure that the number of ZAPs for all the vdevs matches
 	 * the number of ZAPs in the per-vdev ZAP list. This only gets
@@ -9597,7 +9620,7 @@ spa_sync(spa_t *spa, uint64_t txg)
 	 * Update usable space statistics.
 	 */
 	while ((vd = txg_list_remove(&spa->spa_vdev_txg_list, TXG_CLEAN(txg)))
-	    != NULL)
+	    != NULL && !spa_exiting(spa))
 		vdev_sync_done(vd, txg);
 
 	metaslab_class_evict_old(spa->spa_normal_class, txg);
@@ -10155,6 +10178,7 @@ EXPORT_SYMBOL(spa_inject_addref);
 EXPORT_SYMBOL(spa_inject_delref);
 EXPORT_SYMBOL(spa_scan_stat_init);
 EXPORT_SYMBOL(spa_scan_get_stats);
+EXPORT_SYMBOL(spa_set_pre_export_status);
 
 /* device manipulation */
 EXPORT_SYMBOL(spa_vdev_add);

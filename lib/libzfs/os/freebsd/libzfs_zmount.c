@@ -133,3 +133,29 @@ zfs_mount_delegation_check(void)
 {
 	return (0);
 }
+
+/* Called from the tail end of zpool_disable_datasets() */
+void
+zpool_disable_datasets_os(zpool_handle_t *zhp, boolean_t force)
+{
+	(void) zhp, (void) force;
+}
+
+/* Called from the tail end of zfs_unmount() */
+void
+zpool_disable_volume_os(const char *name)
+{
+	(void) name;
+}
+
+void
+zpool_unmount_mark_hard_force_begin(zpool_handle_t *zhp)
+{
+	(void) zhp;
+}
+
+void
+zpool_unmount_mark_hard_force_end(zpool_handle_t *zhp)
+{
+	(void) zhp;
+}

@@ -1094,7 +1094,8 @@ dmu_tx_assign(dmu_tx_t *tx, uint64_t txg_how)
 		if (err != ERESTART || !(txg_how & TXG_WAIT))
 			return (err);
 
-		dmu_tx_wait_flags(tx, txg_how);
+		dmu_tx_wait_flags(tx,
+		    (txg_how & TXG_NOSUSPEND) ? TXG_WAIT_F_NOSUSPEND : 0);
 	}
 
 	txg_rele_to_quiesce(&tx->tx_txgh);

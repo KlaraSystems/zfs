@@ -488,7 +488,6 @@ make_dataset_handle(libzfs_handle_t *hdl, const char *path)
 
 	zhp->zfs_hdl = hdl;
 	(void) strlcpy(zhp->zfs_name, path, sizeof (zhp->zfs_name));
-
 	if (!hdl->libzfs_force_export) {
 		zfs_cmd_t zc = {"\0"};
 

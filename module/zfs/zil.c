@@ -2292,7 +2292,8 @@ zil_commit_writer_stall(zilog_t *zilog)
 	 */
 	ASSERT(MUTEX_HELD(&zilog->zl_issuer_lock));
 	txg_wait_synced(zilog->zl_dmu_pool, 0);
-	ASSERT3P(list_tail(&zilog->zl_lwb_list), ==, NULL);
+	ASSERT(list_is_empty(&zilog->zl_lwb_list) ||
+	    spa_exiting(zilog->zl_spa));
 }
 
 /*
@@ -2864,7 +2865,13 @@ zil_commit_itx_assign(zilog_t *zilog, zil_commit_waiter_t *zcw)
 {
 	dmu_tx_t *tx = dmu_tx_create(zilog->zl_os);
 
-	if (dmu_tx_assign(tx, TXG_WAIT) != 0) {
+	/*
+	 * Since we are not going to create any new dirty data, and we
+	 * can even help with clearing the existing dirty data, we
+	 * should not be subject to the dirty data based delays. We
+	 * use TXG_NOTHROTTLE to bypass the delay mechanism.
+	 */
+	if (dmu_tx_assign(tx, TXG_WAIT | TXG_NOTHROTTLE) != 0) {
 		ASSERT(dmu_objset_exiting(zilog->zl_os));
 		dmu_tx_abort(tx);
 		return;
@@ -3088,7 +3095,7 @@ zil_commit_impl(zilog_t *zilog, uint64_t foid)
 	zil_commit_writer(zilog, zcw);
 	zil_commit_waiter(zilog, zcw);
 
-	if (zcw->zcw_zio_error != 0) {
+	if (zcw->zcw_zio_error != 0 && !dmu_objset_exiting(zilog->zl_os)) {
 		/*
 		 * If there was an error writing out the ZIL blocks that
 		 * this thread is waiting on, then we fallback to
@@ -3375,9 +3382,9 @@ zil_close(zilog_t *zilog)
 	mutex_exit(&zilog->zl_lock);
 
 	/*
-	 * We need to use txg_wait_synced() to wait long enough for the
-	 * ZIL to be clean, and to wait for all pending lwbs to be
-	 * written out.
+	 * We need to use txg_wait_synced() to wait until that txg is synced.
+	 * zil_sync() will guarantee all lwbs up to that txg have been
+	 * written out, flushed, and cleaned.
 	 */
 	if (!dmu_objset_exiting(zilog->zl_os)) {
 		if (txg != 0)

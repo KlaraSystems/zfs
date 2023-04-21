@@ -68,7 +68,10 @@ int zfs_recv_queue_length = SPA_MAXBLOCKSIZE;
 int zfs_recv_queue_ff = 20;
 int zfs_recv_write_batch_size = 1024 * 1024;
 
-const char *recv_clone_name = "%recv";
+const char *const recv_clone_name = "%recv";
+
+/* The receive was closed by an external call. */
+#define	DRC_CLOSED	(1U << 0)
 
 /* The receive was closed by an external call. */
 #define	DRC_CLOSED	(1U << 0)
@@ -1174,7 +1177,7 @@ dmu_recv_begin(char *tofs, char *tosnap, dmu_replay_record_t *drr_begin,
 	dmu_recv_begin_arg_t drba = { 0 };
 	int err;
 
-	bzero(drc, sizeof (dmu_recv_cookie_t));
+	memset(drc, 0, sizeof (dmu_recv_cookie_t));
 	drc->drc_initiator = curthread;
 	drc->drc_drr_begin = drr_begin;
 	drc->drc_drrb = &drr_begin->drr_u.drr_begin;
@@ -2360,10 +2363,8 @@ dmu_recv_cleanup_ds(dmu_recv_cookie_t *drc)
 {
 	dsl_dataset_t *ds = drc->drc_ds;
 	objset_t *os = ds->ds_objset;
-	ds_hold_flags_t dsflags;
 	int error = 0;
 
-	dsflags = (drc->drc_raw) ? DS_HOLD_FLAG_NONE : DS_HOLD_FLAG_DECRYPT;
 	/*
 	 * Wait for the txg sync before cleaning up the receive. For
 	 * resumable receives, this ensures that our resume state has
@@ -3011,8 +3012,8 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, offset_t *voffp)
 		/*
 		 * If this is a new dataset we set the key immediately.
 		 * Otherwise we don't want to change the key until we
-		 * are sure the rest of the receive succeeded so we stash
-		 * the keynvl away until then.
+		 * are sure the rest of the receive succeeded so we
+		 * stash the keynvl away until then.
 		 */
 		err = dsl_crypto_recv_raw(spa_name(spa),
 		    drc->drc_ds->ds_object, drc->drc_fromsnapobj,

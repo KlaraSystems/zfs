@@ -2254,10 +2254,13 @@ zio_wait(zio_t *zio)
 	__zio_execute(zio);
 
 	mutex_enter(&zio->io_lock);
-	while (zio->io_executor != NULL) {
+	while (zio->io_executor != NULL && !spa_exiting_any(zio->io_spa)) {
 		error = cv_timedwait_io(&zio->io_cv, &zio->io_lock,
 		    ddi_get_lbolt() + timeout);
 
+		if (error != 0 && spa_exiting_any(zio->io_spa)) {
+			break;
+		}
 		if (zfs_deadman_enabled && error == -1 &&
 		    gethrtime() - zio->io_queued_timestamp >
 		    spa_deadman_ziotime(zio->io_spa)) {
@@ -4966,8 +4969,8 @@ zio_done(zio_t *zio)
 	}
 
 finish:
-	ASSERT(zio->io_child_count == 0);
-	ASSERT(zio->io_reexecute == 0);
+	ASSERT3U(zio->io_child_count, ==, 0);
+	ASSERT3U(zio->io_reexecute, ==, 0);
 	ASSERT(zio->io_error == 0 || (zio->io_flags & ZIO_FLAG_CANFAIL) ||
 	    zio->io_spa->spa_export_initiator != NULL);
 

@@ -594,7 +594,7 @@ void dmu_buf_add_ref(dmu_buf_t *db, void* tag);
 boolean_t dmu_buf_try_add_ref(dmu_buf_t *, objset_t *os, uint64_t object,
     uint64_t blkid, void *tag);
 
-void dmu_buf_rele(dmu_buf_t *db, void *tag);
+void dmu_buf_rele(dmu_buf_t *db, const void *tag);
 uint64_t dmu_buf_refcount(dmu_buf_t *db);
 uint64_t dmu_buf_user_refcount(dmu_buf_t *db);
 

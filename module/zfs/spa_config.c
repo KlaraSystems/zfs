@@ -563,7 +563,7 @@ spa_config_generate(spa_t *spa, vdev_t *vd, uint64_t txg, int getstats)
 }
 
 static int
-spa_config_update_begin(spa_t *spa, void *tag)
+spa_config_update_begin(spa_t *spa, const void *tag)
 {
 
 	return (spa_config_enter_flags(spa, SCL_ALL, tag, RW_WRITER,
@@ -573,7 +573,7 @@ spa_config_update_begin(spa_t *spa, void *tag)
 /* Complete a label update. */
 static int
 spa_config_update_complete(spa_t *spa, uint64_t txg, boolean_t postsysevent,
-    void *tag)
+    const void *tag)
 {
 	int error = 0;
 

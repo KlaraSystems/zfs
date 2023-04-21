@@ -753,6 +753,7 @@ extern int spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 extern int spa_import(char *pool, nvlist_t *config, nvlist_t *props,
     uint64_t flags);
 extern nvlist_t *spa_tryimport(nvlist_t *tryconfig);
+extern int spa_set_pre_export_status(const char *pool, boolean_t status);
 extern int spa_destroy(const char *pool);
 extern int spa_checkpoint(const char *pool);
 extern int spa_checkpoint_discard(const char *pool);
@@ -957,10 +958,12 @@ extern void spa_iostats_trim_add(spa_t *spa, trim_type_t type,
     uint64_t extents_skipped, uint64_t bytes_skipped,
     uint64_t extents_failed, uint64_t bytes_failed);
 
-/* Config lock handling flags */
 typedef enum {
+	/* Config lock handling flags */
 	SCL_FLAG_TRYENTER	= 1U << 0,
 	SCL_FLAG_NOSUSPEND	= 1U << 1,
+	/* MMP flag */
+	SCL_FLAG_MMP		= 1U << 2,
 } spa_config_flag_t;
 
 extern void spa_import_progress_add(spa_t *spa);
@@ -973,7 +976,8 @@ extern int spa_import_progress_set_state(uint64_t pool_guid,
     spa_load_state_t spa_load_state);
 
 /* Pool configuration locks */
-extern int spa_config_tryenter(spa_t *spa, int locks, void *tag, krw_t rw);
+extern int spa_config_tryenter(spa_t *spa, int locks, const void *tag,
+    krw_t rw);
 extern int spa_config_enter_flags(spa_t *spa, int locks, const void *tag,
     krw_t rw, spa_config_flag_t flags);
 extern void spa_config_enter(spa_t *spa, int locks, const void *tag, krw_t rw);

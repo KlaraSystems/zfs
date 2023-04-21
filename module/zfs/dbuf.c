@@ -1134,7 +1134,7 @@ dbuf_verify(dmu_buf_impl_t *db)
 	if ((db->db_blkptr == NULL || BP_IS_HOLE(db->db_blkptr)) &&
 	    (db->db_buf == NULL || db->db_buf->b_data) &&
 	    db->db.db_data && db->db_blkid != DMU_BONUS_BLKID &&
-	    db->db_state != DB_FILL && !dn->dn_free_txg &&
+	    db->db_state != DB_FILL && (dn == NULL || !dn->dn_free_txg) &&
 	    !dmu_objset_exiting(db->db_objset)) {
 		/*
 		 * If the blkptr isn't set but they have nonzero data,
@@ -3731,7 +3731,7 @@ dbuf_rele(dmu_buf_impl_t *db, void *tag)
 }
 
 void
-dmu_buf_rele(dmu_buf_t *db, void *tag)
+dmu_buf_rele(dmu_buf_t *db, const void *tag)
 {
 	dbuf_rele((dmu_buf_impl_t *)db, tag);
 }
@@ -4269,7 +4269,11 @@ dbuf_lightweight_done(zio_t *zio)
 {
 	dbuf_dirty_record_t *dr = zio->io_private;
 
-	VERIFY0(zio->io_error);
+	if (zio->io_error != 0) {
+		/* If the pool is exiting, only cleanup in-core state. */
+		ASSERT(spa_exiting_any(zio->io_spa));
+		goto out;
+	}
 
 	objset_t *os = dr->dr_dnode->dn_objset;
 	dmu_tx_t *tx = os->os_synctx;
@@ -4293,6 +4297,7 @@ dbuf_lightweight_done(zio_t *zio)
 		    dr->dr_accounted % zio->io_phys_children, zio->io_txg);
 	}
 
+out:
 	abd_free(dr->dt.dll.dr_abd);
 	kmem_free(dr, sizeof (*dr));
 }

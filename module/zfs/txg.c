@@ -538,7 +538,7 @@ txg_completion_notify(dsl_pool_t *dp)
 		mutex_exit(&tx->tx_sync_lock);
 }
 
-static void
+static __attribute__((noreturn)) void
 txg_sync_thread(void *arg)
 {
 	dsl_pool_t *dp = arg;
@@ -893,7 +893,9 @@ txg_force_export(spa_t *spa)
 		while (!complete) {
 			zio_cancel(spa);
 			mutex_enter(&tx->tx_sync_lock);
-			cv_wait(&tx->tx_sync_done_cv, &tx->tx_sync_lock);
+			(void) cv_timedwait(&tx->tx_sync_done_cv,
+			    &tx->tx_sync_lock,
+			    ddi_get_lbolt() + MSEC_TO_TICK(100));
 			complete = (tx->tx_synced_txg >= (txg + t));
 			mutex_exit(&tx->tx_sync_lock);
 		}

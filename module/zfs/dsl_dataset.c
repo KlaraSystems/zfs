@@ -561,7 +561,7 @@ dsl_dataset_try_add_ref(dsl_pool_t *dp, dsl_dataset_t *ds, void *tag)
 
 int
 dsl_dataset_hold_obj_flags(dsl_pool_t *dp, uint64_t dsobj,
-    ds_hold_flags_t flags, void *tag, dsl_dataset_t **dsp)
+    ds_hold_flags_t flags, const void *tag, dsl_dataset_t **dsp)
 {
 	objset_t *mos = dp->dp_meta_objset;
 	dmu_buf_t *dbuf;
@@ -762,7 +762,7 @@ dsl_dataset_create_key_mapping(dsl_dataset_t *ds)
 }
 
 int
-dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, void *tag,
+dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, const void *tag,
     dsl_dataset_t **dsp)
 {
 	return (dsl_dataset_hold_obj_flags(dp, dsobj, 0, tag, dsp));
@@ -1000,7 +1000,7 @@ skip:
 
 /* dsl_dataset_sendrecv_cancel_all callback for dsl_dataset_active_foreach. */
 static int
-dsl_dataset_sendrecv_cancel_cb(dsl_dataset_t *ds, void *arg)
+dsl_dataset_sendrecv_cancel_cb(dsl_dataset_t *ds, __maybe_unused void *arg)
 {
 	int err;
 

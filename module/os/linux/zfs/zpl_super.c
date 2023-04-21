@@ -213,7 +213,8 @@ zpl_remount_fs(struct super_block *sb, int *flags, char *data)
 static int
 __zpl_show_devname(struct seq_file *seq, zfsvfs_t *zfsvfs)
 {
-	ZPL_ENTER_UNMOUNTOK(zfsvfs);
+
+	ZFS_ENTER_UNMOUNTOK(zfsvfs);
 
 	char *fsname = kmem_alloc(ZFS_MAX_DATASET_NAME_LEN, KM_SLEEP);
 	dmu_objset_name(zfsvfs->z_os, fsname);
