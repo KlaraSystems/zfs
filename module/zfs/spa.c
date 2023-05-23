@@ -2400,6 +2400,8 @@ spa_load_verify(spa_t *spa)
 	    spa->spa_dsl_pool->dp_root_dir_obj, verify_dataset_name_len, NULL,
 	    DS_FIND_CHILDREN);
 	dsl_pool_config_exit(spa->spa_dsl_pool, FTAG);
+	if (error != 0 && zfs_recover)
+		return (0);
 	if (error != 0)
 		return (error);
 
