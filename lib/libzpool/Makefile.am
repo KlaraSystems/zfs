@@ -127,6 +127,7 @@ nodist_libzpool_la_SOURCES = \
 	module/zfs/sa.c \
 	module/zfs/sha2_zfs.c \
 	module/zfs/skein_zfs.c \
+	module/zfs/slack.c \
 	module/zfs/spa.c \
 	module/zfs/spa_checkpoint.c \
 	module/zfs/spa_config.c \
