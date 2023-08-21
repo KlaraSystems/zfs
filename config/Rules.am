@@ -21,7 +21,7 @@ DEFAULT_INCLUDES += \
 	-I$(top_srcdir)/lib/libspl/include/os/freebsd
 endif
 
-AM_LIBTOOLFLAGS = --silent
+AM_LIBTOOLFLAGS =
 
 AM_CFLAGS  = -std=gnu99 -Wall -Wstrict-prototypes -Wmissing-prototypes
 AM_CFLAGS += -fno-strict-aliasing
