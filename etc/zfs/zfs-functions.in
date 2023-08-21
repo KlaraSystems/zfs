@@ -87,7 +87,7 @@ fi
 
 # Paths to what we need
 ZFS="@sbindir@/zfs"
-ZED="@sbindir@/zed"
+ZED="/usr/sbin/zed"
 ZPOOL="@sbindir@/zpool"
 ZPOOL_CACHE="@sysconfdir@/zfs/zpool.cache"
 
