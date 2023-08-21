@@ -1678,7 +1678,7 @@ zfs_ioc_pool_scan(zfs_cmd_t *zc)
 	else if (zc->zc_cookie == POOL_SCAN_NONE)
 		error = spa_scan_stop(spa);
 	else
-		error = spa_scan(spa, zc->zc_cookie);
+		error = spa_scan(spa, zc->zc_cookie, 0);
 
 	spa_close(spa, FTAG);
 
@@ -1690,10 +1690,12 @@ zfs_ioc_pool_scan(zfs_cmd_t *zc)
  * poolname             name of the pool
  * scan_type            scan func (pool_scan_func_t)
  * scan_command         scrub pause/resume flag (pool_scrub_cmd_t)
+ * scan_txgstart        from which txg start the scan
  */
 static const zfs_ioc_key_t zfs_keys_pool_scrub[] = {
 	{"scan_type",		DATA_TYPE_UINT64,	0},
 	{"scan_command",	DATA_TYPE_UINT64,	0},
+	{"scan_txgstart",	DATA_TYPE_UINT64,	0},
 };
 
 static int
@@ -1701,12 +1703,14 @@ zfs_ioc_pool_scrub(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	spa_t *spa;
 	int error;
-	uint64_t scan_type, scan_cmd;
+	uint64_t scan_type, scan_cmd, scan_txgstart;
 
 	if (nvlist_lookup_uint64(innvl, "scan_type", &scan_type) != 0)
 		return (SET_ERROR(EINVAL));
 	if (nvlist_lookup_uint64(innvl, "scan_command", &scan_cmd) != 0)
 		return (SET_ERROR(EINVAL));
+	if (nvlist_lookup_uint64(innvl, "scan_txgstart", &scan_txgstart) != 0)
+		scan_txgstart = 0;
 
 	if (scan_cmd >= POOL_SCRUB_FLAGS_END)
 		return (SET_ERROR(EINVAL));
@@ -1719,7 +1723,7 @@ zfs_ioc_pool_scrub(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 	} else if (scan_type == POOL_SCAN_NONE) {
 		error = spa_scan_stop(spa);
 	} else {
-		error = spa_scan(spa, scan_type);
+		error = spa_scan(spa, scan_type, scan_txgstart);
 	}
 
 	spa_close(spa, FTAG);

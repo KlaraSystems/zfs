@@ -401,7 +401,8 @@ get_usage(zpool_help_t idx)
 		return (gettext("\tinitialize [-c | -s | -u] [-w] <pool> "
 		    "[<device> ...]\n"));
 	case HELP_SCRUB:
-		return (gettext("\tscrub [-s | -p] [-w] [-e] <pool> ...\n"));
+		return (gettext("\tscrub [-s | -p] [-w] [-e] [-T txg] "
+		    "<pool> ...\n"));
 	case HELP_RESILVER:
 		return (gettext("\tresilver <pool> ...\n"));
 	case HELP_TRIM:
@@ -7246,6 +7247,7 @@ zpool_do_reopen(int argc, char **argv)
 typedef struct scrub_cbdata {
 	int	cb_type;
 	pool_scrub_cmd_t cb_scrub_cmd;
+	uint64_t	cb_txgstart;
 } scrub_cbdata_t;
 
 static boolean_t
@@ -7289,7 +7291,15 @@ scrub_callback(zpool_handle_t *zhp, void *data)
 		return (1);
 	}
 
-	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd);
+	if (cb->cb_txgstart != 0 && cb->cb_type != POOL_SCAN_SCRUB &&
+	    cb->cb_scrub_cmd != POOL_SCRUB_NORMAL) {
+		(void) fprintf(stderr, gettext("cannot scan '%s' from txg %ld "
+		    ": txg can be provided only at the start of scrub\n"),
+		    zpool_get_name(zhp), cb->cb_txgstart);
+		return (1);
+	}
+
+	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd, cb->cb_txgstart);
 
 	if (err == 0 && zpool_has_checkpoint(zhp) &&
 	    cb->cb_type == POOL_SCAN_SCRUB) {
@@ -7309,11 +7319,12 @@ wait_callback(zpool_handle_t *zhp, void *data)
 }
 
 /*
- * zpool scrub [-s | -p] [-w] [-e] <pool> ...
+ * zpool scrub [-s | -p] [-w] [-e] [-T txg] <pool> ...
  *
  *	-e	Only scrub blocks in the error log.
  *	-s	Stop.  Stops any in-progress scrub.
  *	-p	Pause. Pause in-progress scrub.
+ *	-T	Start txg. From which txg to start scrub.
  *	-w	Wait.  Blocks until scrub has completed.
  */
 int
@@ -7323,16 +7334,18 @@ zpool_do_scrub(int argc, char **argv)
 	scrub_cbdata_t cb;
 	boolean_t wait = B_FALSE;
 	int error;
+	uint64_t txgstart;
 
 	cb.cb_type = POOL_SCAN_SCRUB;
 	cb.cb_scrub_cmd = POOL_SCRUB_NORMAL;
+	txgstart = 0;
 
 	boolean_t is_error_scrub = B_FALSE;
 	boolean_t is_pause = B_FALSE;
 	boolean_t is_stop = B_FALSE;
 
 	/* check options */
-	while ((c = getopt(argc, argv, "spwe")) != -1) {
+	while ((c = getopt(argc, argv, "spweT:")) != -1) {
 		switch (c) {
 		case 'e':
 			is_error_scrub = B_TRUE;
@@ -7343,6 +7356,18 @@ zpool_do_scrub(int argc, char **argv)
 		case 'p':
 			is_pause = B_TRUE;
 			break;
+		case 'T':
+		    {
+			char *endptr;
+			errno = 0;
+			txgstart = strtoull(optarg, &endptr, 0);
+			if (errno != 0 || *endptr != '\0') {
+				(void) fprintf(stderr,
+				    gettext("invalid txg value\n"));
+				usage(B_FALSE);
+			}
+			break;
+		    }
 		case 'w':
 			wait = B_TRUE;
 			break;
@@ -7351,6 +7376,14 @@ zpool_do_scrub(int argc, char **argv)
 			    optopt);
 			usage(B_FALSE);
 		}
+	}
+
+	if (txgstart != 0 && (is_stop || is_pause || is_error_scrub)) {
+		(void) fprintf(stderr, gettext("invalid option "
+		    "txg can be provided only for start of scrub\n"));
+		usage(B_FALSE);
+	} else {
+		cb.cb_txgstart = txgstart;
 	}
 
 	if (is_pause && is_stop) {
