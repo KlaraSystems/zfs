@@ -847,6 +847,7 @@ dsl_scan_setup_check(void *arg, dmu_tx_t *tx)
 typedef struct {
 	pool_scan_func_t func;
 	uintptr_t	 txgstart;
+	uintptr_t	 txgend;
 } setup_sync_arg_t;
 
 void
@@ -873,7 +874,11 @@ dsl_scan_setup_sync(void *arg, dmu_tx_t *tx)
 	scn->scn_phys.scn_func = setup_sync_arg->func;
 	scn->scn_phys.scn_state = DSS_SCANNING;
 	scn->scn_phys.scn_min_txg = setup_sync_arg->txgstart;
-	scn->scn_phys.scn_max_txg = tx->tx_txg;
+	if (setup_sync_arg->txgend == 0) {
+		scn->scn_phys.scn_max_txg = tx->tx_txg;
+	} else {
+		scn->scn_phys.scn_max_txg = setup_sync_arg->txgend;
+	}
 	scn->scn_phys.scn_ddt_class_max = DDT_CLASSES - 1; /* the entire DDT */
 	scn->scn_phys.scn_start_time = gethrestime_sec();
 	scn->scn_phys.scn_errors = 0;
@@ -968,13 +973,14 @@ dsl_scan_setup_sync(void *arg, dmu_tx_t *tx)
  * error scrub.
  */
 int
-dsl_scan(dsl_pool_t *dp, pool_scan_func_t func, uint64_t txgstart)
+dsl_scan(dsl_pool_t *dp, pool_scan_func_t func, uint64_t txgstart,
+    uint64_t txgend)
 {
 	spa_t *spa = dp->dp_spa;
 	dsl_scan_t *scn = dp->dp_scan;
 	setup_sync_arg_t setup_sync_arg;
 
-	if (func != POOL_SCAN_SCRUB && txgstart != 0) {
+	if (func != POOL_SCAN_SCRUB && (txgstart != 0 || txgend != 0)) {
 		return (EINVAL);
 	}
 
@@ -1029,6 +1035,7 @@ dsl_scan(dsl_pool_t *dp, pool_scan_func_t func, uint64_t txgstart)
 
 	setup_sync_arg.func = func;
 	setup_sync_arg.txgstart = txgstart;
+	setup_sync_arg.txgend = txgend;
 
 	return (dsl_sync_task(spa_name(spa), dsl_scan_setup_check,
 	    dsl_scan_setup_sync, &setup_sync_arg, 0, ZFS_SPACE_CHECK_EXTRA_RESERVED));

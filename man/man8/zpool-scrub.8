@@ -40,6 +40,7 @@
 .Op Fl w
 .Op Fl e
 .Op Fl T Ar txg
+.Op Fl E Ar txg
 .Ar pool Ns …
 .
 .Sh DESCRIPTION
@@ -117,8 +118,8 @@ Error scrubbing cannot be run simultaneously with regular scrubbing or
 resilvering, nor can it be run when a regular scrub is paused.
 .It Fl T
 Specify the txg to use for a start point of scrub.
-This option can be used to optimize the time of scrubing to only
-new data.
+.It Fl E
+Specify the txg to use for a end point of scrub.
 .El
 .Sh EXAMPLES
 .Ss Example 1

@@ -3877,7 +3877,7 @@ ztest_device_removal(ztest_ds_t *zd, uint64_t id)
 	 * strategy employed by ztest_fault_inject() when selecting which
 	 * offset are redundant and can be damaged.
 	 */
-	error = spa_scan(spa, POOL_SCAN_SCRUB, 0);
+	error = spa_scan(spa, POOL_SCAN_SCRUB, 0, 0);
 	if (error == 0) {
 		while (dsl_scan_scrubbing(spa_get_dsl(spa)))
 			txg_wait_synced(spa_get_dsl(spa), 0);
@@ -6326,7 +6326,7 @@ out:
 static int
 ztest_scrub_impl(spa_t *spa)
 {
-	int error = spa_scan(spa, POOL_SCAN_SCRUB, 0);
+	int error = spa_scan(spa, POOL_SCAN_SCRUB, 0, 0);
 	if (error)
 		return (error);
 
@@ -6360,7 +6360,7 @@ ztest_scrub(ztest_ds_t *zd, uint64_t id)
 	/*
 	 * Start a scrub, wait a moment, then force a restart.
 	 */
-	(void) spa_scan(spa, POOL_SCAN_SCRUB, 0);
+	(void) spa_scan(spa, POOL_SCAN_SCRUB, 0, 0);
 	(void) poll(NULL, 0, 100);
 
 	error = ztest_scrub_impl(spa);
@@ -7020,7 +7020,7 @@ ztest_spa_import_export(char *oldname, char *newname)
 	 * Kick off a scrub to tickle scrub/export races.
 	 */
 	if (ztest_random(2) == 0)
-		(void) spa_scan(spa, POOL_SCAN_SCRUB, 0);
+		(void) spa_scan(spa, POOL_SCAN_SCRUB, 0, 0);
 
 	pool_guid = spa_guid(spa);
 	spa_close(spa, FTAG);

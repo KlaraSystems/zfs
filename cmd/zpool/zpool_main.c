@@ -402,7 +402,7 @@ get_usage(zpool_help_t idx)
 		    "[<device> ...]\n"));
 	case HELP_SCRUB:
 		return (gettext("\tscrub [-s | -p] [-w] [-e] [-T txg] "
-		    "<pool> ...\n"));
+		    "[-E txg] <pool> ...\n"));
 	case HELP_RESILVER:
 		return (gettext("\tresilver <pool> ...\n"));
 	case HELP_TRIM:
@@ -7248,6 +7248,7 @@ typedef struct scrub_cbdata {
 	int	cb_type;
 	pool_scrub_cmd_t cb_scrub_cmd;
 	uint64_t	cb_txgstart;
+	uint64_t	cb_txgend;
 } scrub_cbdata_t;
 
 static boolean_t
@@ -7299,7 +7300,8 @@ scrub_callback(zpool_handle_t *zhp, void *data)
 		return (1);
 	}
 
-	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd, cb->cb_txgstart);
+	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd, cb->cb_txgstart,
+	    cb->cb_txgend);
 
 	if (err == 0 && zpool_has_checkpoint(zhp) &&
 	    cb->cb_type == POOL_SCAN_SCRUB) {
@@ -7325,6 +7327,7 @@ wait_callback(zpool_handle_t *zhp, void *data)
  *	-s	Stop.  Stops any in-progress scrub.
  *	-p	Pause. Pause in-progress scrub.
  *	-T	Start txg. From which txg to start scrub.
+ *	-E	End txg. To which txg scrub data.
  *	-w	Wait.  Blocks until scrub has completed.
  */
 int
@@ -7334,11 +7337,12 @@ zpool_do_scrub(int argc, char **argv)
 	scrub_cbdata_t cb;
 	boolean_t wait = B_FALSE;
 	int error;
-	uint64_t txgstart;
+	uint64_t txgstart, txgend;
 
 	cb.cb_type = POOL_SCAN_SCRUB;
 	cb.cb_scrub_cmd = POOL_SCRUB_NORMAL;
 	txgstart = 0;
+	txgend = 0;
 
 	boolean_t is_error_scrub = B_FALSE;
 	boolean_t is_pause = B_FALSE;
@@ -7368,6 +7372,18 @@ zpool_do_scrub(int argc, char **argv)
 			}
 			break;
 		    }
+		case 'E':
+		    {
+			char *endptr;
+			errno = 0;
+			txgend = strtoull(optarg, &endptr, 0);
+			if (errno != 0 || *endptr != '\0') {
+				(void) fprintf(stderr,
+				    gettext("invalid txg value\n"));
+				usage(B_FALSE);
+			}
+			break;
+		    }
 		case 'w':
 			wait = B_TRUE;
 			break;
@@ -7380,10 +7396,17 @@ zpool_do_scrub(int argc, char **argv)
 
 	if (txgstart != 0 && (is_stop || is_pause || is_error_scrub)) {
 		(void) fprintf(stderr, gettext("invalid option "
-		    "txg can be provided only for start of scrub\n"));
+		    "starting txg can be provided only for start of scrub\n"));
 		usage(B_FALSE);
 	} else {
 		cb.cb_txgstart = txgstart;
+	}
+	if (txgend != 0 && (is_stop || is_pause || is_error_scrub)) {
+		(void) fprintf(stderr, gettext("invalid option "
+		    "ending txg can be provided only for start of scrub\n"));
+		usage(B_FALSE);
+	} else {
+		cb.cb_txgend = txgend;
 	}
 
 	if (is_pause && is_stop) {

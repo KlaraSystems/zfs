@@ -815,7 +815,8 @@ extern void spa_l2cache_activate(vdev_t *vd);
 extern void spa_l2cache_drop(spa_t *spa);
 
 /* scanning */
-extern int spa_scan(spa_t *spa, pool_scan_func_t func, uint64_t txgstart);
+extern int spa_scan(spa_t *spa, pool_scan_func_t func, uint64_t txgstart,
+    uint64_t txgstop);
 extern int spa_scan_stop(spa_t *spa);
 extern int spa_scrub_pause_resume(spa_t *spa, pool_scrub_cmd_t flag);
 
