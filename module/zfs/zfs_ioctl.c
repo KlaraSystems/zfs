@@ -1695,8 +1695,8 @@ zfs_ioc_pool_scan(zfs_cmd_t *zc)
 static const zfs_ioc_key_t zfs_keys_pool_scrub[] = {
 	{"scan_type",		DATA_TYPE_UINT64,	0},
 	{"scan_command",	DATA_TYPE_UINT64,	0},
-	{"scan_txgstart",	DATA_TYPE_UINT64,	0},
-	{"scan_txgend",		DATA_TYPE_UINT64,	0},
+	{"scan_txgstart",	DATA_TYPE_UINT64,	ZK_OPTIONAL},
+	{"scan_txgend",		DATA_TYPE_UINT64,	ZK_OPTIONAL},
 };
 
 static int

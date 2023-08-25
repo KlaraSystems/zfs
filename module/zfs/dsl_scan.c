@@ -846,8 +846,8 @@ dsl_scan_setup_check(void *arg, dmu_tx_t *tx)
 
 typedef struct {
 	pool_scan_func_t func;
-	uintptr_t	 txgstart;
-	uintptr_t	 txgend;
+	uint64_t	 txgstart;
+	uint64_t	 txgend;
 } setup_sync_arg_t;
 
 void

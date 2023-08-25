@@ -8192,7 +8192,7 @@ spa_scan(spa_t *spa, pool_scan_func_t func, uint64_t txgstart, uint64_t txgend)
 	    !spa_feature_is_enabled(spa, SPA_FEATURE_RESILVER_DEFER))
 		return (SET_ERROR(ENOTSUP));
 
-	if ((txgstart != 0 || txgend != 0) && func != POOL_SCAN_SCRUB)
+	if (func != POOL_SCAN_SCRUB && (txgstart != 0 || txgend != 0))
 		return (SET_ERROR(ENOTSUP));
 
 	/*

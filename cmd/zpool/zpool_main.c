@@ -7299,6 +7299,13 @@ scrub_callback(zpool_handle_t *zhp, void *data)
 		    zpool_get_name(zhp), cb->cb_txgstart);
 		return (1);
 	}
+	if (cb->cb_txgend != 0 && cb->cb_type != POOL_SCAN_SCRUB &&
+	    cb->cb_scrub_cmd != POOL_SCRUB_NORMAL) {
+		(void) fprintf(stderr, gettext("cannot scan '%s' to txg %ld "
+		    ": txg can be provided only at the start of scrub\n"),
+		    zpool_get_name(zhp), cb->cb_txgend);
+		return (1);
+	}
 
 	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd, cb->cb_txgstart,
 	    cb->cb_txgend);
@@ -7349,7 +7356,7 @@ zpool_do_scrub(int argc, char **argv)
 	boolean_t is_stop = B_FALSE;
 
 	/* check options */
-	while ((c = getopt(argc, argv, "spweT:")) != -1) {
+	while ((c = getopt(argc, argv, "spweE:T:")) != -1) {
 		switch (c) {
 		case 'e':
 			is_error_scrub = B_TRUE;

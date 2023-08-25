@@ -2647,7 +2647,7 @@ out:
  */
 int
 zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd,
-    uint64_t txgstart, uint64_t txgstop)
+    uint64_t txgstart, uint64_t txgend)
 {
 	char errbuf[ERRBUFLEN];
 	int err;
@@ -2657,7 +2657,7 @@ zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd,
 	fnvlist_add_uint64(args, "scan_type", (uint64_t)func);
 	fnvlist_add_uint64(args, "scan_command", (uint64_t)cmd);
 	fnvlist_add_uint64(args, "scan_txgstart", txgstart);
-	fnvlist_add_uint64(args, "scan_txgstop", txgstop);
+	fnvlist_add_uint64(args, "scan_txgend", txgend);
 
 	err = lzc_scrub(ZFS_IOC_POOL_SCRUB, zhp->zpool_name, args, NULL);
 	fnvlist_free(args);
