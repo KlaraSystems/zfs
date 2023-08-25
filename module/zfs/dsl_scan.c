@@ -1038,7 +1038,8 @@ dsl_scan(dsl_pool_t *dp, pool_scan_func_t func, uint64_t txgstart,
 	setup_sync_arg.txgend = txgend;
 
 	return (dsl_sync_task(spa_name(spa), dsl_scan_setup_check,
-	    dsl_scan_setup_sync, &setup_sync_arg, 0, ZFS_SPACE_CHECK_EXTRA_RESERVED));
+	    dsl_scan_setup_sync, &setup_sync_arg, 0,
+	    ZFS_SPACE_CHECK_EXTRA_RESERVED));
 }
 
 static void
@@ -4309,7 +4310,8 @@ dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 		if (vdev_resilver_needed(spa->spa_root_vdev, NULL, NULL))
 			setup_sync_arg.func = POOL_SCAN_RESILVER;
 		zfs_dbgmsg("restarting scan func=%u on %s txg=%llu",
-		    setup_sync_arg.func, dp->dp_spa->spa_name, (longlong_t)tx->tx_txg);
+		    setup_sync_arg.func, dp->dp_spa->spa_name,
+		    (longlong_t)tx->tx_txg);
 		dsl_scan_setup_sync(&setup_sync_arg, tx);
 	}
 

@@ -7345,6 +7345,7 @@ zpool_do_scrub(int argc, char **argv)
 	boolean_t wait = B_FALSE;
 	int error;
 	uint64_t txgstart, txgend;
+	char *endptr;
 
 	cb.cb_type = POOL_SCAN_SCRUB;
 	cb.cb_scrub_cmd = POOL_SCRUB_NORMAL;
@@ -7368,8 +7369,6 @@ zpool_do_scrub(int argc, char **argv)
 			is_pause = B_TRUE;
 			break;
 		case 'T':
-		    {
-			char *endptr;
 			errno = 0;
 			txgstart = strtoull(optarg, &endptr, 0);
 			if (errno != 0 || *endptr != '\0') {
@@ -7378,10 +7377,7 @@ zpool_do_scrub(int argc, char **argv)
 				usage(B_FALSE);
 			}
 			break;
-		    }
 		case 'E':
-		    {
-			char *endptr;
 			errno = 0;
 			txgend = strtoull(optarg, &endptr, 0);
 			if (errno != 0 || *endptr != '\0') {
@@ -7390,7 +7386,6 @@ zpool_do_scrub(int argc, char **argv)
 				usage(B_FALSE);
 			}
 			break;
-		    }
 		case 'w':
 			wait = B_TRUE;
 			break;
