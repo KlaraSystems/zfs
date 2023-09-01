@@ -7329,8 +7329,9 @@ wait_callback(zpool_handle_t *zhp, void *data)
 }
 
 /*
- * zpool scrub [-s | -p] [-w] [-e] [-T txg] [-E txg] <pool> ...
+ * zpool scrub [-s | -p] [-w] [-e] [-C] [-T txg] [-E txg] <pool> ...
  *
+ *	-C	Scrub from last saved txg.
  *	-e	Only scrub blocks in the error log.
  *	-s	Stop.  Stops any in-progress scrub.
  *	-p	Pause. Pause in-progress scrub.
