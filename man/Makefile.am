@@ -8,7 +8,6 @@ dist_man_MANS = \
 	man1/ztest.1 \
 	man1/raidz_test.1 \
 	man1/zvol_wait.1 \
-	man1/arcstat.1 \
 	\
 	man5/vdev_id.conf.5 \
 	\
@@ -22,6 +21,7 @@ dist_man_MANS = \
 	man7/zpoolconcepts.7 \
 	man7/zpoolprops.7 \
 	\
+	man8/arcstat.8 \
 	man8/fsck.zfs.8 \
 	man8/mount.zfs.8 \
 	man8/vdev_id.8 \
