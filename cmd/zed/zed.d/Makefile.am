@@ -51,7 +51,7 @@ install-data-hook:
 	for f in $(zedconfdefaults); do \
 	  test -f "$(DESTDIR)$(zedconfdir)/$${f}" -o \
 	       -L "$(DESTDIR)$(zedconfdir)/$${f}" || \
-	    ln -s "$(zedexecdir)/$${f}" "$(DESTDIR)$(zedconfdir)"; \
+	    echo "$${f}" >> "$(DESTDIR)$(zedexecdir)/DEFAULT-ENABLED" ; \
 	done
 	chmod 0600 "$(DESTDIR)$(zedconfdir)/zed.rc"
 
