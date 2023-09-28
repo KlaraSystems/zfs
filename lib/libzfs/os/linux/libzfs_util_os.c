@@ -107,6 +107,15 @@ libzfs_load_module_impl(const char *module)
 	int load = 0, fd;
 	hrtime_t start;
 
+	/*
+	 * If inside a container, set the timeout to zero (LP: #1760173),
+	 * however, this can be over-ridden by ZFS_MODULE_TIMEOUT just
+	 * in case the user explicitly wants to set the timeout for some
+	 * reason just for backward compatibilty
+	 */
+	if (access("/run/systemd/container", R_OK) == 0)
+		timeout = 0;
+
 	/* Optionally request module loading */
 	if (!libzfs_module_loaded(module)) {
 		load_str = getenv("ZFS_MODULE_LOADING");
