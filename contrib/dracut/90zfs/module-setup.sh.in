@@ -89,7 +89,8 @@ install() {
 
 		for _service in \
 			"zfs-import-scan.service" \
-			"zfs-import-cache.service"; do
+			"zfs-import-cache.service" \
+            "zfs-load-module.service"; do
 			inst_simple "${systemdsystemunitdir}/${_service}"
 			systemctl -q --root "${initdir}" add-wants zfs-import.target "${_service}"
 

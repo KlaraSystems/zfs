@@ -4,6 +4,7 @@ systemdpreset_DATA = \
 	50-zfs.preset
 
 systemdunit_DATA = \
+	zfs-load-module.service \
 	zfs-zed.service \
 	zfs-import-cache.service \
 	zfs-import-scan.service \
