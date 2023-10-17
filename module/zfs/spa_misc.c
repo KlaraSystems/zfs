@@ -2308,6 +2308,7 @@ spa_import_progress_set_notes(uint64_t pool_guid, char *notes)
 			sip->spa_load_notes = NULL;
 			if (notes != NULL)
 				sip->spa_load_notes = spa_strdup(notes);
+zfs_dbgmsg("spa_import_note(%s: %s", sip->pool_name, notes);
 			error = 0;
 			break;
 		}
