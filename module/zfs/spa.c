@@ -3057,6 +3057,8 @@ spa_load(spa_t *spa, spa_load_state_t state, spa_import_type_t type)
 	spa->spa_load_state = state;
 	(void) spa_import_progress_set_state(spa_guid(spa),
 	    spa_load_state(spa));
+	(void) spa_import_progress_set_notes(spa_guid(spa),
+	    "spa_load()");
 
 	gethrestime(&spa->spa_loaded_ts);
 	error = spa_load_impl(spa, type, &ereport);

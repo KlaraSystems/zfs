@@ -1153,6 +1153,7 @@ spa_ld_log_sm_data(spa_t *spa)
 
 	uint_t pn = 0;
 	uint64_t ps = 0;
+	uint64_t nsm = 0;
 	psls = sls = avl_first(&spa->spa_sm_logs_by_txg);
 	while (sls != NULL) {
 		/* Prefetch log spacemaps up to 16 TXGs or MBs ahead. */
@@ -1185,6 +1186,16 @@ spa_ld_log_sm_data(spa_t *spa)
 		summary_add_data(spa, sls->sls_txg,
 		    sls->sls_mscount, 0, sls->sls_nblocks);
 
+		char buf[256];
+		(void) snprintf(buf, sizeof (buf), fmt,
+		    "read %llu of %llu log space maps "
+		    "in %lld ms", (u_longlong_t)nsm,
+		    (u_longlong_t)avl_numnodes(&spa->spa_sm_logs_by_txg),
+		    (longlong_t)((gethrtime() - read_logs_starttime)
+			/ 1000000));
+
+		(void) spa_import_progress_set_notes(spa_guid(spa),
+
 		struct spa_ld_log_sm_arg vla = {
 			.slls_spa = spa,
 			.slls_txg = sls->sls_txg
@@ -1200,6 +1211,7 @@ spa_ld_log_sm_data(spa_t *spa)
 
 		pn--;
 		ps -= space_map_length(sls->sls_sm);
+		nsm++;
 		space_map_close(sls->sls_sm);
 		sls->sls_sm = NULL;
 		sls = AVL_NEXT(&spa->spa_sm_logs_by_txg, sls);
