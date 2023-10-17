@@ -1187,7 +1187,7 @@ spa_ld_log_sm_data(spa_t *spa)
 		    sls->sls_mscount, 0, sls->sls_nblocks);
 
 		char buf[256];
-		(void) snprintf(buf, sizeof (buf), fmt,
+		(void) snprintf(buf, sizeof (buf),
 		    "read %llu of %llu log space maps "
 		    "in %lld ms", (u_longlong_t)nsm,
 		    (u_longlong_t)avl_numnodes(&spa->spa_sm_logs_by_txg),
@@ -1195,6 +1195,7 @@ spa_ld_log_sm_data(spa_t *spa)
 			/ 1000000));
 
 		(void) spa_import_progress_set_notes(spa_guid(spa),
+		    (char *)&buf);
 
 		struct spa_ld_log_sm_arg vla = {
 			.slls_spa = spa,

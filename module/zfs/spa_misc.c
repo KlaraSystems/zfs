@@ -424,7 +424,7 @@ spa_load_note(spa_t *spa, const char *fmt, ...)
 	    spa->spa_trust_config ? "trusted" : "untrusted", buf);
 
 	(void) spa_import_progress_set_notes(spa_guid(spa),
-            &buf);
+            (char *)&buf);
 }
 
 /*
@@ -2206,7 +2206,7 @@ spa_import_progress_show(struct seq_file *f, void *data)
 	    (u_longlong_t)sip->pool_guid, (u_longlong_t)sip->spa_load_state,
 	    (u_longlong_t)sip->mmp_sec_remaining,
 	    (u_longlong_t)sip->spa_load_max_txg,
-	    (sip->pool_name ? sip->pool_name : "-"));
+	    (sip->pool_name ? sip->pool_name : "-"),
 	    (sip->spa_load_notes ? sip->spa_load_notes : "-"));
 
 	return (0);
@@ -2264,7 +2264,7 @@ spa_import_progress_destroy(void)
 
 int
 spa_import_progress_set_state(uint64_t pool_guid,
-    spa_load_state_t load_state, char *notes)
+    spa_load_state_t load_state)
 {
 	spa_history_list_t *shl = spa_import_progress_list;
 	spa_import_progress_t *sip;
@@ -2279,10 +2279,7 @@ spa_import_progress_set_state(uint64_t pool_guid,
 		if (sip->pool_guid == pool_guid) {
 			sip->spa_load_state = load_state;
 			if (sip->spa_load_notes != NULL)
-				free(sip->spa_load_notes);
-			sip->spa_load_notes = NULL;
-			if (notes != NULL)
-				sip->spa_load_notes = spa_strdup(notes);
+				spa_strfree(sip->spa_load_notes);
 			error = 0;
 			break;
 		}
