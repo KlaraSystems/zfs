@@ -422,6 +422,9 @@ spa_load_note(spa_t *spa, const char *fmt, ...)
 
 	zfs_dbgmsg("spa_load(%s, config %s): %s", spa->spa_name,
 	    spa->spa_trust_config ? "trusted" : "untrusted", buf);
+
+	(void) spa_import_progress_set_notes(spa_guid(spa),
+            &buf);
 }
 
 /*
