@@ -90,6 +90,7 @@
 #include <sys/zfeature.h>
 #include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
+#include <sys/trace_zfs.h>
 
 #ifdef	_KERNEL
 #include <sys/fm/protocol.h>
@@ -1131,6 +1132,9 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 	spa_taskqs_t *tqs = &spa->spa_zio_taskq[t][q];
 	uint_t cpus, flags = TASKQ_DYNAMIC;
 
+	tqs->stqs_type = q;
+	tqs->stqs_zio_type = t;
+
 	switch (mode) {
 	case ZTI_MODE_FIXED:
 		ASSERT3U(value, >, 0);
@@ -1562,9 +1566,13 @@ spa_taskq_dispatch(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
 {
 	spa_taskqs_t *tqs = &spa->spa_zio_taskq[t][q];
 	taskq_t *tq;
+	taskq_ent_t *ent = &zio->io_tqent;
+	uint_t flags = cutinline ? TQ_FRONT : 0;
 
 	ASSERT3P(tqs->stqs_taskq, !=, NULL);
 	ASSERT3U(tqs->stqs_count, !=, 0);
+	DTRACE_PROBE2(spa_taskqs_ent__dispatch,
+	    spa_taskqs_t *, tqs, taskq_ent_t *, ent);
 
 	/*
 	 * NB: We are assuming that the zio can only be dispatched
@@ -1572,7 +1580,7 @@ spa_taskq_dispatch(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
 	 * to dispatch the zio to another taskq at the same time.
 	 */
 	ASSERT(zio);
-	ASSERT(taskq_empty_ent(&zio->io_tqent));
+	ASSERT(taskq_empty_ent(ent));
 
 	if (tqs->stqs_count == 1) {
 		tq = tqs->stqs_taskq[0];
@@ -1583,8 +1591,10 @@ spa_taskq_dispatch(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
 		tq = tqs->stqs_taskq[((uint64_t)gethrtime()) % tqs->stqs_count];
 	}
 
-	taskq_dispatch_ent(tq, func, zio, cutinline ? TQ_FRONT : 0,
-	    &zio->io_tqent);
+	taskq_dispatch_ent(tq, func, zio, flags, ent);
+
+	DTRACE_PROBE2(spa_taskqs_ent__dispatched,
+	    spa_taskqs_t *, tqs, taskq_ent_t *, ent);
 }
 
 static void
