@@ -1558,14 +1558,14 @@ spa_taskq_write_param(ZFS_MODULE_PARAM_ARGS)
 /*
  * Dispatch a task to the appropriate taskq for the ZFS I/O type and priority.
  * Note that a type may have multiple discrete taskqs to avoid lock contention
- * on the taskq itself.
+ * on the taskq itself. In that case we try each one until it goes in, before
+ * falling back to waiting on a lock.
  */
 void
 spa_taskq_dispatch(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
     task_func_t *func, zio_t *zio, boolean_t cutinline)
 {
 	spa_taskqs_t *tqs = &spa->spa_zio_taskq[t][q];
-	taskq_t *tq;
 	taskq_ent_t *ent = &zio->io_tqent;
 	uint_t flags = cutinline ? TQ_FRONT : 0;
 
@@ -1583,16 +1583,27 @@ spa_taskq_dispatch(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
 	ASSERT(taskq_empty_ent(ent));
 
 	if (tqs->stqs_count == 1) {
-		tq = tqs->stqs_taskq[0];
-	} else if ((t == ZIO_TYPE_WRITE) && (q == ZIO_TASKQ_ISSUE) &&
-	    ZIO_HAS_ALLOCATOR(zio)) {
-		tq = tqs->stqs_taskq[zio->io_allocator % tqs->stqs_count];
-	} else {
-		tq = tqs->stqs_taskq[((uint64_t)gethrtime()) % tqs->stqs_count];
+		taskq_dispatch_ent(tqs->stqs_taskq[0], func, zio, flags, ent);
+		goto out;
 	}
 
-	taskq_dispatch_ent(tq, func, zio, flags, ent);
+	int select;
+	if ((t == ZIO_TYPE_WRITE) && (q == ZIO_TASKQ_ISSUE) &&
+	    ZIO_HAS_ALLOCATOR(zio)) {
+		select = zio->io_allocator % tqs->stqs_count;
+	} else {
+		select = ((uint64_t)gethrtime()) % tqs->stqs_count;
+	}
+	for (int i = 0; i < tqs->stqs_count; i++) {
+		if (taskq_try_dispatch_ent(
+		    tqs->stqs_taskq[select], func, zio, flags, ent))
+			goto out;
+		select = (select+1) % tqs->stqs_count;
+	}
 
+	taskq_dispatch_ent(tqs->stqs_taskq[select], func, zio, flags, ent);
+
+out:
 	DTRACE_PROBE2(spa_taskqs_ent__dispatched,
 	    spa_taskqs_t *, tqs, taskq_ent_t *, ent);
 }
