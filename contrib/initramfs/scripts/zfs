@@ -79,7 +79,9 @@ find_rootfs()
 
 	# If it's already specified, just keep it mounted and exit
 	# User (kernel command line) must be correct.
-	[ -n "${ZFS_BOOTFS}" ] && return 0
+	if [ -n "${ZFS_BOOTFS}" ] && [ "${ZFS_BOOTFS}" != "zfs:AUTO" ]; then
+		return 0
+	fi
 
 	# Not set, try to find it in the 'bootfs' property of the pool.
 	# NOTE: zpool does not support 'get -H -ovalue bootfs'...
@@ -418,6 +420,16 @@ decrypt_fs()
 			# Continue only if the key needs to be loaded
 			[ "$KEYSTATUS" = "unavailable" ] || return 0
 
+			# Try extensions first
+			for f in "/etc/zfs/initramfs-tools-load-key" "/etc/zfs/initramfs-tools-load-key.d/"*; do
+				[ -r "$f" ] || continue
+				(. "$f") && {
+					# Successful return and actually-loaded key: we're done
+					KEYSTATUS="$(get_fs_value "${ENCRYPTIONROOT}" keystatus)"
+					[ "$KEYSTATUS" = "unavailable" ] || return 0
+				}
+			done
+
 			# Do not prompt if key is stored noninteractively,
 			if ! [ "${KEYLOCATION}" = "prompt" ]; then
 				$ZFS load-key "${ENCRYPTIONROOT}"
@@ -609,7 +621,7 @@ setup_snapshot_booting()
 	retval=0
 
 	# Make sure that the snapshot specified actually exists.
-	if [ ! "$(get_fs_value "${snap}" type)" ]
+	if [ -z "$(get_fs_value "${snap}" type)" ]
 	then
 		# Snapshot does not exist (...@<null> ?)
 		# ask the user for a snapshot to use.
@@ -626,7 +638,8 @@ setup_snapshot_booting()
 	then
 		# If the destination dataset for the clone
 		# already exists, destroy it. Recursively
-		if [ "$(get_fs_value "${rootfs}_${snapname}" type)" ]; then
+		if [ -n "$(get_fs_value "${rootfs}_${snapname}" type)" ]
+		then
 			filesystems=$("${ZFS}" list -oname -tfilesystem -H \
 			    -r -Sname "${ZFS_BOOTFS}")
 			for fs in $filesystems; do
@@ -644,6 +657,7 @@ setup_snapshot_booting()
 		then
 			# Rollback snapshot
 			rollback_snap "$s" || retval=$((retval + 1))
+			ZFS_BOOTFS="${rootfs}"
 		else
 			# Setup a destination filesystem name.
 			# Ex: Called with 'rpool/ROOT/debian@snap2'
@@ -651,8 +665,8 @@ setup_snapshot_booting()
 			#       rpool/ROOT/debian/boot@snap2	=> rpool/ROOT/debian_snap2/boot
 			#       rpool/ROOT/debian/usr@snap2	=> rpool/ROOT/debian_snap2/usr
 			#       rpool/ROOT/debian/var@snap2	=> rpool/ROOT/debian_snap2/var
-			subfs="${s##$rootfs}"
-			subfs="${subfs%%@$snapname}"
+			subfs="${s##"$rootfs"}"
+			subfs="${subfs%%@"$snapname"}"
 
 			destfs="${rootfs}_${snapname}" # base fs.
 			[ -n "$subfs" ] && destfs="${destfs}$subfs" # + sub fs.
@@ -770,7 +784,7 @@ mountroot()
 	#	rpool=rpool			(default if none of the above is used)
 	#	root=<pool>/<dataset>		(uses this for rpool - first part)
 	#	root=ZFS=<pool>/<dataset>	(uses this for rpool - first part, without 'ZFS=')
-	#	root=zfs:AUTO			(tries to detect both pool and rootfs
+	#	root=zfs:AUTO			(tries to detect both pool and rootfs)
 	#	root=zfs:<pool>/<dataset>	(uses this for rpool - first part, without 'zfs:')
 	#
 	# Option <dataset> could also be <snapshot>
@@ -860,7 +874,7 @@ mountroot()
 		done
 		IFS="$OLD_IFS"
 
-		[ "$quiet" != "y" ] && zfs_log_end_msg $ZFS_ERROR
+		[ "$quiet" != "y" ] && zfs_log_end_msg "$ZFS_ERROR"
 	else
 		# No auto - use value from the command line option.
 

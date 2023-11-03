@@ -8,6 +8,7 @@ ConditionPathIsDirectory=/sys/module/zfs
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+EnvironmentFile=-@initconfdir@/zfs
 ExecStart=/sbin/zvol_wait
 
 [Install]
