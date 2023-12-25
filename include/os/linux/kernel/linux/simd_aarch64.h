@@ -71,7 +71,7 @@
 #define	ID_AA64PFR0_EL1		sys_reg(3, 0, 0, 1, 0)
 #define	ID_AA64ISAR0_EL1	sys_reg(3, 0, 0, 6, 0)
 
-#if defined(HAVE_KERNEL_FPU)
+#if defined(HAVE_KERNEL_NEON)
 #define	kfpu_allowed()		1
 #define	kfpu_begin()		kernel_neon_begin()
 #define	kfpu_end()		kernel_neon_end()
@@ -80,7 +80,6 @@
 #define	kfpu_begin()		do {} while (0)
 #define	kfpu_end()		do {} while (0)
 #endif
-
 #define	kfpu_init()		(0)
 #define	kfpu_fini()		do {} while (0)
 
