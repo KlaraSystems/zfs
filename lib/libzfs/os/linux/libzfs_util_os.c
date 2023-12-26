@@ -109,6 +109,16 @@ libzfs_load_module(void)
 
 	const char *timeout_str = getenv("ZFS_MODULE_TIMEOUT");
 	int seconds = 10;
+
+	/*
+	 * If inside a container, set the timeout to zero (LP: #1760173),
+	 * however, this can be over-ridden by ZFS_MODULE_TIMEOUT just
+	 * in case the user explicitly wants to set the timeout for some
+	 * reason just for backward compatibilty
+	 */
+	if (access("/run/systemd/container", R_OK) == 0)
+		seconds = 0;
+
 	if (timeout_str)
 		seconds = MIN(strtol(timeout_str, NULL, 0), 600);
 	struct itimerspec timeout = {.it_value.tv_sec = MAX(seconds, 0)};
