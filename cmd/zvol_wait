@@ -25,6 +25,14 @@ filter_out_deleted_zvols() {
 	IFS="$OIFS"
 }
 
+filter_out_locked_zvols() {
+	while read -r zvol; do
+		if ! [ "$(zfs list -H -o keystatus rpool/export/vault/block "$zvol")" = "unavailable" ]; then
+			echo "$zvol"
+		fi
+	done
+}
+
 list_zvols() {
 	read -r default_volmode < /sys/module/zfs/parameters/zvol_volmode
 	zfs list -t volume -H -o \
@@ -74,7 +82,7 @@ while [ "$outer_loop" -lt 20 ]; do
 	while [ "$inner_loop" -lt 30 ]; do
 		inner_loop=$((inner_loop + 1))
 
-		zvols="$(filter_out_zvols_with_links)"
+		zvols="$(filter_out_zvols_with_links | filter_out_locked_zvols)"
 
 		zvols_count=$(count_zvols)
 		if [ "$zvols_count" -eq 0 ]; then
