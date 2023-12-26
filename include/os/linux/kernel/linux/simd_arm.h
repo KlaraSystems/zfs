@@ -53,7 +53,7 @@
 #include <asm/elf.h>
 #include <asm/hwcap.h>
 
-#if defined(HAVE_KERNEL_NEON)
+#if (defined(HAVE_KERNEL_NEON) && defined(CONFIG_KERNEL_MODE_NEON))
 #define	kfpu_allowed()		1
 #define	kfpu_begin()		kernel_neon_begin()
 #define	kfpu_end()		kernel_neon_end()
