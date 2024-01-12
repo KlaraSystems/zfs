@@ -57,4 +57,15 @@ zfs_slack_compress_buf(void *src, void *dst, size_t s_len, size_t d_len,
 	return (c_len);
 }
 
+static int
+zfs_slack_decompress_buf(void *src, void *dst, size_t s_len, size_t d_len,
+    int level)
+{
+	(void) level;
+	ASSERT3U(d_len, >=, s_len);
+	memcpy(dst, src, s_len);
+	return (0);
+}
+
 ZFS_COMPRESS_WRAP_DECL(zfs_slack_compress)
+ZFS_DECOMPRESS_WRAP_DECL(zfs_slack_decompress)
