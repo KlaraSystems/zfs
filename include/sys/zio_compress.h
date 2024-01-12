@@ -173,6 +173,8 @@ extern int zfs_lz4_decompress(abd_t *src, abd_t *dst, size_t s_len,
     size_t d_len, int level);
 extern size_t zfs_slack_compress(abd_t *src, abd_t *dst, size_t s_len,
     size_t d_len, int level);
+extern int zfs_slack_decompress(abd_t *src, abd_t *dst, size_t s_len,
+    size_t d_len, int level);
 
 /*
  * Compress and decompress data if necessary.
