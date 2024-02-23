@@ -2,7 +2,6 @@ dist_noinst_man_MANS = \
 	%D%/man1/cstyle.1
 
 dist_man_MANS = \
-	%D%/man1/arcstat.1 \
 	%D%/man1/raidz_test.1 \
 	%D%/man1/test-runner.1 \
 	%D%/man1/zhack.1 \
@@ -22,6 +21,7 @@ dist_man_MANS = \
 	%D%/man7/zpoolconcepts.7 \
 	%D%/man7/zpoolprops.7 \
 	\
+	%D%/man8/arcstat.8 \
 	%D%/man8/fsck.zfs.8 \
 	%D%/man8/mount.zfs.8 \
 	%D%/man8/vdev_id.8 \
