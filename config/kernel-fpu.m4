@@ -112,7 +112,8 @@ AC_DEFUN([ZFS_AC_KERNEL_FPU], [
 			    [kernel exports FPU functions])
 		],[
 			dnl #
-			dnl # ARM neon symbols
+			dnl # ARM neon symbols (only on arm and arm64)
+			dnl # could be GPL-only on arm64 after Linux 6.2
 			dnl #
 			ZFS_LINUX_TEST_RESULT([kernel_neon_license],[
 				AC_MSG_RESULT(kernel_neon_*)
