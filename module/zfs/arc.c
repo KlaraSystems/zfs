@@ -4065,7 +4065,7 @@ arc_evict_state_impl(multilist_t *ml, int idx, arc_buf_hdr_t *marker,
 
 	ASSERT3P(marker, !=, NULL);
 
-	mls = multilist_sublist_lock(ml, idx);
+	mls = multilist_sublist_lock_idx(ml, idx);
 
 	for (hdr = multilist_sublist_prev(mls, marker); likely(hdr != NULL);
 	    hdr = multilist_sublist_prev(mls, marker)) {
@@ -4178,6 +4178,26 @@ arc_evict_state_impl(multilist_t *ml, int idx, arc_buf_hdr_t *marker,
 	return (bytes_evicted);
 }
 
+static arc_buf_hdr_t *
+arc_state_alloc_marker(void)
+{
+	arc_buf_hdr_t *marker = kmem_cache_alloc(hdr_full_cache, KM_SLEEP);
+
+	/*
+	 * A b_spa of 0 is used to indicate that this header is
+	 * a marker. This fact is used in arc_evict_state_impl().
+	 */
+	marker->b_spa = 0;
+
+	return (marker);
+}
+
+static void
+arc_state_free_marker(arc_buf_hdr_t *marker)
+{
+	kmem_cache_free(hdr_full_cache, marker);
+}
+
 /*
  * Allocate an array of buffer headers used as placeholders during arc state
  * eviction.
@@ -4188,17 +4208,8 @@ arc_state_alloc_markers(int count)
 	arc_buf_hdr_t **markers;
 
 	markers = kmem_zalloc(sizeof (*markers) * count, KM_SLEEP);
-	for (int i = 0; i < count; i++) {
-		markers[i] = kmem_cache_alloc(hdr_full_cache, KM_SLEEP);
-
-		/*
-		 * A b_spa of 0 is used to indicate that this header is
-		 * a marker. This fact is used in arc_evict_type() and
-		 * arc_evict_state_impl().
-		 */
-		markers[i]->b_spa = 0;
-
-	}
+	for (int i = 0; i < count; i++)
+		markers[i] = arc_state_alloc_marker();
 	return (markers);
 }
 
@@ -4206,7 +4217,7 @@ static void
 arc_state_free_markers(arc_buf_hdr_t **markers, int count)
 {
 	for (int i = 0; i < count; i++)
-		kmem_cache_free(hdr_full_cache, markers[i]);
+		arc_state_free_marker(markers[i]);
 	kmem_free(markers, sizeof (*markers) * count);
 }
 
@@ -4250,7 +4261,7 @@ arc_evict_state(arc_state_t *state, uint64_t spa, uint64_t bytes,
 	for (int i = 0; i < num_sublists; i++) {
 		multilist_sublist_t *mls;
 
-		mls = multilist_sublist_lock(ml, i);
+		mls = multilist_sublist_lock_idx(ml, i);
 		multilist_sublist_insert_tail(mls, markers[i]);
 		multilist_sublist_unlock(mls);
 	}
@@ -4328,7 +4339,7 @@ arc_evict_state(arc_state_t *state, uint64_t spa, uint64_t bytes,
 	}
 
 	for (int i = 0; i < num_sublists; i++) {
-		multilist_sublist_t *mls = multilist_sublist_lock(ml, i);
+		multilist_sublist_t *mls = multilist_sublist_lock_idx(ml, i);
 		multilist_sublist_remove(mls, markers[i]);
 		multilist_sublist_unlock(mls);
 	}
@@ -4568,8 +4579,8 @@ arc_evict_type(arc_state_t *state)
 	 * We keep the sublist lock until we're finished, to prevent
 	 * the headers from being destroyed via arc_evict_state().
 	 */
-	data_mls = multilist_sublist_lock(data_ml, data_idx);
-	meta_mls = multilist_sublist_lock(meta_ml, meta_idx);
+	data_mls = multilist_sublist_lock_idx(data_ml, data_idx);
+	meta_mls = multilist_sublist_lock_idx(meta_ml, meta_idx);
 
 	/*
 	 * These two loops are to ensure we skip any markers that
@@ -9139,7 +9150,7 @@ l2arc_sublist_lock(int list_num)
 	 * sublists being selected.
 	 */
 	idx = multilist_get_random_index(ml);
-	return (multilist_sublist_lock(ml, idx));
+	return (multilist_sublist_lock_idx(ml, idx));
 }
 
 /*
@@ -9569,9 +9580,9 @@ l2arc_blk_fetch_done(zio_t *zio)
 static uint64_t
 l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 {
-	arc_buf_hdr_t 		*hdr, *hdr_prev, *head;
-	uint64_t 		write_asize, write_psize, write_lsize, headroom;
-	boolean_t		full;
+	arc_buf_hdr_t 		*hdr, *head, *marker;
+	uint64_t 		write_asize, write_psize, headroom;
+	boolean_t		full, from_head = !arc_warm;
 	l2arc_write_callback_t	*cb = NULL;
 	zio_t 			*pio, *wzio;
 	uint64_t 		guid = spa_load_guid(spa);
@@ -9580,10 +9591,11 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 	ASSERT3P(dev->l2ad_vdev, !=, NULL);
 
 	pio = NULL;
-	write_lsize = write_asize = write_psize = 0;
+	write_asize = write_psize = 0;
 	full = B_FALSE;
 	head = kmem_cache_alloc(hdr_l2only_cache, KM_PUSHPAGE);
 	arc_hdr_set_flags(head, ARC_FLAG_L2_WRITE_HEAD | ARC_FLAG_HAS_L2HDR);
+	marker = arc_state_alloc_marker();
 
 	/*
 	 * Copy buffers for L2ARC writing.
@@ -9598,40 +9610,34 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 				continue;
 		}
 
-		multilist_sublist_t *mls = l2arc_sublist_lock(pass);
 		uint64_t passed_sz = 0;
-
-		VERIFY3P(mls, !=, NULL);
-
-		/*
-		 * L2ARC fast warmup.
-		 *
-		 * Until the ARC is warm and starts to evict, read from the
-		 * head of the ARC lists rather than the tail.
-		 */
-		if (arc_warm == B_FALSE)
-			hdr = multilist_sublist_head(mls);
-		else
-			hdr = multilist_sublist_tail(mls);
-
 		headroom = target_sz * l2arc_headroom;
 		if (zfs_compressed_arc_enabled)
 			headroom = (headroom * l2arc_headroom_boost) / 100;
 
-		for (; hdr; hdr = hdr_prev) {
+		/*
+		 * Until the ARC is warm and starts to evict, read from the
+		 * head of the ARC lists rather than the tail.
+		 */
+		multilist_sublist_t *mls = l2arc_sublist_lock(pass);
+		ASSERT3P(mls, !=, NULL);
+		if (from_head)
+			hdr = multilist_sublist_head(mls);
+		else
+			hdr = multilist_sublist_tail(mls);
+
+		while (hdr != NULL) {
 			kmutex_t *hash_lock;
 			abd_t *to_write = NULL;
 
-			if (arc_warm == B_FALSE)
-				hdr_prev = multilist_sublist_next(mls, hdr);
-			else
-				hdr_prev = multilist_sublist_prev(mls, hdr);
-
 			hash_lock = HDR_LOCK(hdr);
 			if (!mutex_tryenter(hash_lock)) {
-				/*
-				 * Skip this buffer rather than waiting.
-				 */
+skip:
+				/* Skip this buffer rather than waiting. */
+				if (from_head)
+					hdr = multilist_sublist_next(mls, hdr);
+				else
+					hdr = multilist_sublist_prev(mls, hdr);
 				continue;
 			}
 
@@ -9646,7 +9652,7 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 
 			if (!l2arc_write_eligible(guid, hdr)) {
 				mutex_exit(hash_lock);
-				continue;
+				goto skip;
 			}
 
 			/*
@@ -9656,7 +9662,6 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 			 * ARC_FLAG_L2_WRITING bit ensures this won't happen.
 			 */
 			ASSERT(HDR_HAS_L1HDR(hdr));
-
 			ASSERT3U(HDR_GET_PSIZE(hdr), >, 0);
 			ASSERT3U(arc_hdr_size(hdr), >, 0);
 			ASSERT(hdr->b_l1hdr.b_pabd != NULL ||
@@ -9672,18 +9677,18 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 			}
 
 			/*
-			 * We rely on the L1 portion of the header below, so
-			 * it's invalid for this header to have been evicted out
-			 * of the ghost cache, prior to being written out. The
-			 * ARC_FLAG_L2_WRITING bit ensures this won't happen.
+			 * We should not sleep with sublist lock held or it
+			 * may block ARC eviction.  Insert a marker to save
+			 * the position and drop the lock.
 			 */
-			arc_hdr_set_flags(hdr, ARC_FLAG_L2_WRITING);
-			ASSERT(HDR_HAS_L1HDR(hdr));
-
-			ASSERT3U(HDR_GET_PSIZE(hdr), >, 0);
-			ASSERT(hdr->b_l1hdr.b_pabd != NULL ||
-			    HDR_HAS_RABD(hdr));
-			ASSERT3U(arc_hdr_size(hdr), >, 0);
+			if (from_head) {
+				multilist_sublist_insert_after(mls, hdr,
+				    marker);
+			} else {
+				multilist_sublist_insert_before(mls, hdr,
+				    marker);
+			}
+			multilist_sublist_unlock(mls);
 
 			/*
 			 * If this header has b_rabd, we can use this since it
@@ -9714,9 +9719,9 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 				    &to_write);
 				if (ret != 0) {
 					arc_hdr_clear_flags(hdr,
-					    ARC_FLAG_L2_WRITING);
+					    ARC_FLAG_L2CACHE);
 					mutex_exit(hash_lock);
-					continue;
+					goto next;
 				}
 
 				l2arc_free_abd_on_write(to_write, asize, type);
@@ -9725,24 +9730,37 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 			/* l2arc_hdr_arcstats_update() expects a valid asize */
 			HDR_SET_L2SIZE(hdr, asize);
 
+			hdr->b_l2hdr.b_dev = dev;
+			hdr->b_l2hdr.b_daddr = dev->l2ad_hand;
+			hdr->b_l2hdr.b_hits = 0;
+			hdr->b_l2hdr.b_arcs_state =
+			    hdr->b_l1hdr.b_state->arcs_state;
+			mutex_enter(&dev->l2ad_mtx);
 			if (pio == NULL) {
 				/*
 				 * Insert a dummy header on the buflist so
 				 * l2arc_write_done() can find where the
 				 * write buffers begin without searching.
 				 */
-				mutex_enter(&dev->l2ad_mtx);
 				list_insert_head(&dev->l2ad_buflist, head);
-				mutex_exit(&dev->l2ad_mtx);
+			}
+			list_insert_head(&dev->l2ad_buflist, hdr);
+			mutex_exit(&dev->l2ad_mtx);
+			arc_hdr_set_flags(hdr, ARC_FLAG_HAS_L2HDR |
+			    ARC_FLAG_L2_WRITING);
 
+			(void) zfs_refcount_add_many(&dev->l2ad_alloc,
+			    arc_hdr_size(hdr), hdr);
+			l2arc_hdr_arcstats_increment(hdr);
+
+			boolean_t commit = l2arc_log_blk_insert(dev, hdr);
+			mutex_exit(hash_lock);
+
+			if (pio == NULL) {
 				cb = kmem_alloc(
 				    sizeof (l2arc_write_callback_t), KM_SLEEP);
 				cb->l2wcb_dev = dev;
 				cb->l2wcb_head = head;
-				/*
-				 * Create a list to save allocated abd buffers
-				 * for l2arc_log_blk_commit().
-				 */
 				list_create(&cb->l2wcb_abd_list,
 				    sizeof (l2arc_lb_abd_buf_t),
 				    offsetof(l2arc_lb_abd_buf_t, node));
@@ -9750,48 +9768,32 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 				    ZIO_FLAG_CANFAIL);
 			}
 
-			hdr->b_l2hdr.b_dev = dev;
-			hdr->b_l2hdr.b_hits = 0;
-
-			hdr->b_l2hdr.b_daddr = dev->l2ad_hand;
-			hdr->b_l2hdr.b_arcs_state =
-			    hdr->b_l1hdr.b_state->arcs_state;
-			arc_hdr_set_flags(hdr, ARC_FLAG_HAS_L2HDR);
-
-			mutex_enter(&dev->l2ad_mtx);
-			list_insert_head(&dev->l2ad_buflist, hdr);
-			mutex_exit(&dev->l2ad_mtx);
-
-			(void) zfs_refcount_add_many(&dev->l2ad_alloc,
-			    arc_hdr_size(hdr), hdr);
-
 			wzio = zio_write_phys(pio, dev->l2ad_vdev,
-			    hdr->b_l2hdr.b_daddr, asize, to_write,
+			    dev->l2ad_hand, asize, to_write,
 			    ZIO_CHECKSUM_OFF, NULL, hdr,
 			    ZIO_PRIORITY_ASYNC_WRITE,
 			    ZIO_FLAG_CANFAIL, B_FALSE);
 
-			write_lsize += HDR_GET_LSIZE(hdr);
 			DTRACE_PROBE2(l2arc__write, vdev_t *, dev->l2ad_vdev,
 			    zio_t *, wzio);
+			zio_nowait(wzio);
 
 			write_psize += psize;
 			write_asize += asize;
 			dev->l2ad_hand += asize;
-			l2arc_hdr_arcstats_increment(hdr);
 			vdev_space_update(dev->l2ad_vdev, asize, 0, 0);
 
-			mutex_exit(hash_lock);
-
-			/*
-			 * Append buf info to current log and commit if full.
-			 * arcstat_l2_{size,asize} kstats are updated
-			 * internally.
-			 */
-			if (l2arc_log_blk_insert(dev, hdr))
+			if (commit) {
 				l2arc_log_blk_commit(dev, pio, cb);
+			}
 
-			zio_nowait(wzio);
+next:
+			multilist_sublist_lock(mls);
+			if (from_head)
+				hdr = multilist_sublist_next(mls, marker);
+			else
+				hdr = multilist_sublist_prev(mls, marker);
+			multilist_sublist_remove(mls, marker);
 		}
 
 		multilist_sublist_unlock(mls);
@@ -9800,9 +9802,11 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 			break;
 	}
 
+	arc_state_free_marker(marker);
+
 	/* No buffers selected for writing? */
 	if (pio == NULL) {
-		ASSERT0(write_lsize);
+		ASSERT0(write_psize);
 		ASSERT(!HDR_HAS_L1HDR(head));
 		kmem_cache_free(hdr_l2only_cache, head);
 
@@ -11229,7 +11233,7 @@ l2arc_log_blk_insert(l2arc_dev_t *dev, const arc_buf_hdr_t *hdr)
 	L2BLK_SET_TYPE((le)->le_prop, hdr->b_type);
 	L2BLK_SET_PROTECTED((le)->le_prop, !!(HDR_PROTECTED(hdr)));
 	L2BLK_SET_PREFETCH((le)->le_prop, !!(HDR_PREFETCH(hdr)));
-	L2BLK_SET_STATE((le)->le_prop, hdr->b_l1hdr.b_state->arcs_state);
+	L2BLK_SET_STATE((le)->le_prop, hdr->b_l2hdr.b_arcs_state);
 
 	dev->l2ad_log_blk_payload_asize += vdev_psize_to_asize(dev->l2ad_vdev,
 	    HDR_GET_PSIZE(hdr));
