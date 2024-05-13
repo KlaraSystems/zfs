@@ -25,6 +25,12 @@ PACKAGE_NAME="${pkgname}"
 PACKAGE_VERSION="${pkgver}"
 PACKAGE_CONFIG="${pkgcfg}"
 NO_WEAK_MODULES="yes"
+if [ -f \$kernel_source_dir/.config ]; then
+    . \$kernel_source_dir/.config
+    if [ "\$CONFIG_PREEMPT_RT" = "y" ]; then
+        BUILD_EXCLUSIVE_KERNEL="NOT ON PREEMPT_RT"
+    fi
+fi
 PRE_BUILD="configure
   --prefix=/usr
   --with-config=kernel
