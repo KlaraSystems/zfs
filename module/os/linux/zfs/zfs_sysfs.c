@@ -166,6 +166,8 @@ static int
 zfs_kobj_init(zfs_mod_kobj_t *zkobj, int attr_cnt, int child_cnt,
     sysfs_show_func show_func)
 {
+	memset(zkobj, 0, sizeof (zfs_mod_kobj_t));
+
 	/*
 	 * Initialize object's attributes. Count can be zero.
 	 */
@@ -225,7 +227,10 @@ zfs_kobj_add(zfs_mod_kobj_t *zkobj, struct kobject *parent, const char *name)
 	ASSERT(zkobj->zko_default_group.attrs[zkobj->zko_attr_count] == NULL);
 
 	kobject_init(&zkobj->zko_kobj, &zkobj->zko_kobj_type);
-	return (kobject_add(&zkobj->zko_kobj, parent, name));
+	int err = kobject_add(&zkobj->zko_kobj, parent, name);
+	if (err)
+		kobject_put(&zkobj->zko_kobj);
+	return (err);
 }
 
 /*
@@ -407,9 +412,7 @@ kernel_feature_to_kobj(zfs_mod_kobj_t *parent, int slot, const char *name)
 
 	zfs_kobj_add_attr(zfs_kobj, 0, "supported");
 
-	err = zfs_kobj_add(zfs_kobj, &parent->zko_kobj, name);
-	if (err)
-		zfs_kobj_release(&zfs_kobj->zko_kobj);
+	(void) zfs_kobj_add(zfs_kobj, &parent->zko_kobj, name);
 }
 
 static int
@@ -425,10 +428,8 @@ zfs_kernel_features_init(zfs_mod_kobj_t *zfs_kobj, struct kobject *parent)
 	if (err)
 		return (err);
 	err = zfs_kobj_add(zfs_kobj, parent, ZFS_SYSFS_KERNEL_FEATURES);
-	if (err) {
-		zfs_kobj_release(&zfs_kobj->zko_kobj);
+	if (err)
 		return (err);
-	}
 
 	/*
 	 * Now create a kobject for each feature.
@@ -510,9 +511,7 @@ pool_feature_to_kobj(zfs_mod_kobj_t *parent, spa_feature_t fid,
 	for (int i = 0; i < ZPOOL_FEATURE_ATTR_COUNT; i++)
 		zfs_kobj_add_attr(zfs_kobj, i, pool_feature_attrs[i]);
 
-	err = zfs_kobj_add(zfs_kobj, &parent->zko_kobj, name);
-	if (err)
-		zfs_kobj_release(&zfs_kobj->zko_kobj);
+	(void) zfs_kobj_add(zfs_kobj, &parent->zko_kobj, name);
 }
 
 static int
@@ -527,10 +526,8 @@ zfs_pool_features_init(zfs_mod_kobj_t *zfs_kobj, struct kobject *parent)
 	if (err)
 		return (err);
 	err = zfs_kobj_add(zfs_kobj, parent, ZFS_SYSFS_POOL_FEATURES);
-	if (err) {
-		zfs_kobj_release(&zfs_kobj->zko_kobj);
+	if (err)
 		return (err);
-	}
 
 	/*
 	 * Now create a kobject for each feature.
@@ -569,9 +566,7 @@ zprop_to_kobj(int prop, void *args)
 	for (int i = 0; i < data->p2k_attr_count; i++)
 		zfs_kobj_add_attr(zfs_kobj, i, zprop_attrs[i]);
 
-	err = zfs_kobj_add(zfs_kobj, &parent->zko_kobj, name);
-	if (err)
-		zfs_kobj_release(&zfs_kobj->zko_kobj);
+	(void) zfs_kobj_add(zfs_kobj, &parent->zko_kobj, name);
 
 	return (ZPROP_CONT);
 }
@@ -619,10 +614,8 @@ zfs_sysfs_properties_init(zfs_mod_kobj_t *zfs_kobj, struct kobject *parent,
 		return (err);
 
 	err = zfs_kobj_add(zfs_kobj, parent, name);
-	if (err) {
-		zfs_kobj_release(&zfs_kobj->zko_kobj);
+	if (err)
 		return (err);
-	}
 
 	/*
 	 * Create a kobject for each property.
