@@ -3289,6 +3289,37 @@ fuid_table_destroy(void)
 	}
 }
 
+/*
+ * Clean up DDT internal state. ddt_lookup() adds entries to ddt_tree, which on
+ * a live pool are normally cleaned up during ddt_sync(). We can't do that (and
+ * wouldn't want to anyway), but if we don't clean up the presence of stuff on
+ * ddt_tree will trip asserts in ddt_table_free(). So, we clean up ourselves.
+ *
+ * Note that this is not a particularly efficient way to do this, but
+ * ddt_remove() is the only public method that can do the work we need, and it
+ * requires the right locks and etc to do the job. This is only ever called
+ * during zdb shutdown so efficiency is not especially important.
+ */
+static void
+zdb_ddt_cleanup(spa_t *spa) {
+	for (enum zio_checksum c = 0; c < ZIO_CHECKSUM_FUNCTIONS; c++) {
+		ddt_t *ddt = spa->spa_ddt[c];
+		if (!ddt)
+			continue;
+
+		spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
+		ddt_enter(ddt);
+		ddt_entry_t *dde = avl_first(&ddt->ddt_tree), *next;
+		while (dde) {
+			next = AVL_NEXT(&ddt->ddt_tree, dde);
+			ddt_remove(ddt, dde);
+			dde = next;
+		}
+		ddt_exit(ddt);
+		spa_config_exit(spa, SCL_CONFIG, FTAG);
+	}
+}
+
 static void
 zdb_exit(int reason)
 {
@@ -5635,7 +5666,6 @@ static void
 zdb_count_block(zdb_cb_t *zcb, zilog_t *zilog, const blkptr_t *bp,
     dmu_object_type_t type)
 {
-	uint64_t refcnt = 0;
 	int i;
 
 	ASSERT(type < ZDB_OT_TOTAL);
@@ -5751,7 +5781,7 @@ zdb_count_block(zdb_cb_t *zcb, zilog_t *zilog, const blkptr_t *bp,
 		/*
 		 * Cloned blocks are special. We need to count them, so we can
 		 * later uncount them when reporting leaked space, and we must
-		 * only claim them them once.
+		 * only claim them once.
 		 *
 		 * To do this, we keep our own in-memory BRT. For each block
 		 * we haven't seen before, we look it up in the real BRT and
@@ -5776,41 +5806,147 @@ zdb_count_block(zdb_cb_t *zcb, zilog_t *zilog, const blkptr_t *bp,
 			return;
 		}
 
-		uint64_t crefcnt = brt_entry_get_refcount(zcb->zcb_spa, bp);
-		if (crefcnt > 0) {
+		uint64_t refcnt = brt_entry_get_refcount(zcb->zcb_spa, bp);
+		if (refcnt > 0) {
 			zbre = umem_zalloc(sizeof (zdb_brt_entry_t),
 			    UMEM_NOFAIL);
 			zbre->zbre_dva = bp->blk_dva[0];
-			zbre->zbre_refcount = crefcnt;
+			zbre->zbre_refcount = refcnt;
 			avl_insert(&zcb->zcb_brt, zbre, where);
 		}
+	}
+
+	if (BP_GET_DEDUP(bp)) {
+		/*
+		 * Dedup'd blocks are special. We need to count them, so we can
+		 * later uncount them when reporting leaked space, and we must
+		 * only claim them once.
+		 *
+		 * We use the existing dedup system to track what we've seen.
+		 * The first time we see a block, we do a ddt_lookup() to see
+		 * if it exists in the DDT. This function also properly
+		 * resolves any unflushed logs. If we're doing leak tracking,
+		 * we claim the block at this time.
+		 *
+		 * Each time we see a block, we reduce the refcount in the
+		 * entry by one, and add to the size and count of dedup'd
+		 * blocks to report at the end.
+		 */
+
+		ddt_t *ddt = ddt_select(zcb->zcb_spa, bp);
+		ddt_enter(ddt);
+
+		/*
+		 * First, we look for the block the live tree. It will be
+		 * present if and only if there was a previous call to
+		 * ddt_lookup(), so if it's not there, we know this is the
+		 * first time we've seen this block.
+		 */
+		ddt_key_t search;
+		ddt_key_fill(&search, bp);
+		ddt_entry_t *dde = avl_find(&ddt->ddt_tree, &search, NULL);
+		if (dde != NULL) {
+			/*
+			 * We've seen this block before; find out if we have
+			 * any references for this variant.
+			 */
+			uint64_t refcnt = ddt_phys_total_refcnt(ddt, dde);
+			ddt_phys_variant_t v = ddt_phys_select(ddt, dde, bp);
+			uint64_t vrefcnt = ddt_phys_refcnt(dde->dde_phys, v);
+
+			/*
+			 * If there is a reference for it, consume it.
+			 *
+			 * We've seen this block before, otherwise we wouldn't
+			 * have found it in the live tree. Therefore, it is the
+			 * second or later instance of a real dedup'd block.
+			 * This means it cannot have been a UNIQUE class, and
+			 * so was not eligible to be pruned. Thus, in normal
+			 * operation, the refcount can't possibly be zero here
+			 * - if it was, then we somehow have dedup'd a block
+			 * without a corresponding refcount bump, which would
+			 * be bad, as the block is freed when the last refcount
+			 * is returned.
+			 *
+			 * In this case, we will not consume a reference that
+			 * we don't have, but we'll still count the block. This
+			 * will show up later as a leak.
+			 */
+			if (refcnt > 0 && vrefcnt > 0)
+				ddt_phys_decref(dde->dde_phys, v);
+
+			zcb->zcb_dedup_asize += BP_GET_ASIZE(bp);
+			zcb->zcb_dedup_blocks++;
+
+			/*
+			 * Note that we keep the entry around after its
+			 * refcount has been reduced to zero, so we can tell
+			 * the difference between a block we're seeing for for
+			 * the first time and an extra block that we've seen
+			 * too many times.
+			 */
+			ddt_exit(ddt);
+			return;
+		}
+
+		spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
+
+		/* First time we've seen this block, inflate it's entry. */
+		dde = ddt_lookup(ddt, bp, B_TRUE);
+
+		/*
+		 * Check refcount. It's valid for it to be zero, if the entry
+		 * was pruned. We still want to keep the entry around in this
+		 * case, so we can detect spurious duplicates above.
+		 */
+		uint64_t refcnt = ddt_phys_total_refcnt(ddt, dde);
+		if (refcnt > 0) {
+			ddt_phys_variant_t v = ddt_phys_select(ddt, dde, bp);
+			uint64_t vrefcnt = ddt_phys_refcnt(dde->dde_phys, v);
+			if (vrefcnt == 0) {
+				/*
+				 * If it had a total refcount > 1, but no
+				 * refcount for this variant, then it's a lost
+				 * copy of this block.
+				 *
+				 * We have to count it as a leak, because there
+				 * is a valid entry for this bp that isn't this
+				 * block, so if this entry is freed, this block
+				 * will be left hanging around on disk with
+				 * invalid data. But, we can't keep this entry
+				 * around, because this block is not the first
+				 * "valid" block for it, and we don't want the
+				 * first real block, if it exists, to enter the
+				 * above block and be miscounted.
+				 *
+				 * So, we count the block as a leak here, by
+				 * counting it, removing the entry from the
+				 * DDT, and not issuing the claim.
+				 */
+				zcb->zcb_dedup_asize += BP_GET_ASIZE(bp);
+				zcb->zcb_dedup_blocks++;
+
+				ddt_remove(ddt, dde);
+
+				spa_config_exit(spa, SCL_CONFIG, FTAG);
+				ddt_exit(ddt);
+
+				return;
+			}
+
+			ddt_phys_decref(dde->dde_phys, v);
+		}
+
+		spa_config_exit(spa, SCL_CONFIG, FTAG);
+		ddt_exit(ddt);
 	}
 
 	if (dump_opt['L'])
 		return;
 
-	if (BP_GET_DEDUP(bp)) {
-		ddt_t *ddt;
-		ddt_entry_t *dde;
-
-		ddt = ddt_select(zcb->zcb_spa, bp);
-		ddt_enter(ddt);
-		dde = ddt_lookup(ddt, bp, B_FALSE);
-
-		if (dde == NULL) {
-			refcnt = 0;
-		} else {
-			ddt_phys_variant_t v = ddt_phys_select(ddt, dde, bp);
-			refcnt = ddt_phys_decref(dde->dde_phys, v);
-			if (ddt_phys_total_refcnt(ddt, dde) == 0)
-				ddt_remove(ddt, dde);
-		}
-		ddt_exit(ddt);
-	}
-
-	VERIFY3U(zio_wait(zio_claim(NULL, zcb->zcb_spa,
-	    refcnt ? 0 : spa_min_claim_txg(zcb->zcb_spa),
-	    bp, NULL, NULL, ZIO_FLAG_CANFAIL)), ==, 0);
+	VERIFY0(zio_wait(zio_claim(NULL, zcb->zcb_spa,
+	    spa_min_claim_txg(zcb->zcb_spa), bp, NULL, NULL,
+	    ZIO_FLAG_CANFAIL)));
 }
 
 static void
@@ -6119,53 +6255,6 @@ zdb_load_obsolete_counts(vdev_t *vd)
 		space_map_close(prev_obsolete_sm);
 	}
 	return (counts);
-}
-
-static void
-zdb_ddt_leak_init(spa_t *spa, zdb_cb_t *zcb)
-{
-	ddt_bookmark_t ddb = {0};
-	ddt_lightweight_entry_t ddlwe;
-	int error;
-
-	ASSERT(!dump_opt['L']);
-
-	while ((error = ddt_walk(spa, &ddb, &ddlwe)) == 0) {
-		blkptr_t blk;
-
-		if (ddb.ddb_class == DDT_CLASS_UNIQUE)
-			return;
-
-		ddt_t *ddt = spa->spa_ddt[ddb.ddb_checksum];
-		VERIFY(ddt);
-
-		uint64_t refcnt = 0;
-		for (int p = 0; p < ddlwe.ddlwe_nphys; p++) {
-			ddt_univ_phys_t *ddp = &ddlwe.ddlwe_phys;
-			ddt_phys_variant_t v = DDT_PHYS_VARIANT(ddt, p);
-
-			if (ddt_phys_birth(ddp, v) == 0)
-				continue;
-			refcnt += ddt_phys_refcnt(ddp, v);
-
-			ddt_bp_create(ddb.ddb_checksum,
-			    &ddlwe.ddlwe_key, ddp, v, &blk);
-			if (DDT_PHYS_IS_DITTO(ddt, p)) {
-				zdb_count_block(zcb, NULL, &blk, ZDB_OT_DITTO);
-			} else {
-				zcb->zcb_dedup_asize += BP_GET_ASIZE(&blk) *
-				    (ddt_phys_refcnt(ddp, v) - 1);
-				zcb->zcb_dedup_blocks++;
-			}
-		}
-		ASSERT3U(refcnt, >, 1);
-
-		ddt_enter(ddt);
-		VERIFY(ddt_lookup(ddt, &blk, B_TRUE) != NULL);
-		ddt_exit(ddt);
-	}
-
-	ASSERT(error == ENOENT);
 }
 
 typedef struct checkpoint_sm_exclude_entry_arg {
@@ -6551,10 +6640,6 @@ zdb_leak_init(spa_t *spa, zdb_cb_t *zcb)
 		(void) bpobj_iterate_nofree(&dp->dp_obsolete_bpobj,
 		    increment_indirect_mapping_cb, zcb, NULL);
 	}
-
-	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
-	zdb_ddt_leak_init(spa, zcb);
-	spa_config_exit(spa, SCL_CONFIG, FTAG);
 }
 
 static boolean_t
@@ -6819,6 +6904,8 @@ dump_block_stats(spa_t *spa)
 	int e, c, err;
 	bp_embedded_type_t i;
 
+	ddt_prefetch_all(spa);
+
 	zcb = umem_zalloc(sizeof (zdb_cb_t), UMEM_NOFAIL);
 
 	if (spa_feature_is_active(spa, SPA_FEATURE_BLOCK_CLONING)) {
@@ -6943,7 +7030,6 @@ dump_block_stats(spa_t *spa)
 		    (u_longlong_t)total_alloc,
 		    (dump_opt['L']) ? "unreachable" : "leaked",
 		    (longlong_t)(total_alloc - total_found));
-		leaks = B_TRUE;
 	}
 
 	if (tzb->zb_count == 0) {
@@ -8025,16 +8111,25 @@ dump_mos_leaks(spa_t *spa)
 
 	mos_leak_vdev(spa->spa_root_vdev);
 
-	for (uint64_t class = 0; class < DDT_CLASSES; class++) {
-		for (uint64_t type = 0; type < DDT_TYPES; type++) {
-			for (uint64_t cksum = 0;
-			    cksum < ZIO_CHECKSUM_FUNCTIONS; cksum++) {
-				ddt_t *ddt = spa->spa_ddt[cksum];
-				if (!ddt)
-					continue;
+	for (uint64_t c = 0; c < ZIO_CHECKSUM_FUNCTIONS; c++) {
+		ddt_t *ddt = spa->spa_ddt[c];
+		if (!ddt)
+			continue;
+
+		/* DDT store objects */
+		for (ddt_type_t type = 0; type < DDT_TYPES; type++) {
+			for (ddt_class_t class = 0; class < DDT_CLASSES;
+			    class++) {
 				mos_obj_refd(ddt->ddt_object[type][class]);
 			}
 		}
+
+		/* FDT container */
+		mos_obj_refd(ddt->ddt_dir_object);
+
+		/* FDT log objects */
+		mos_obj_refd(ddt->ddt_log[0].ddl_object);
+		mos_obj_refd(ddt->ddt_log[1].ddl_object);
 	}
 
 	if (spa->spa_brt != NULL) {
@@ -9613,6 +9708,8 @@ retry_lookup:
 	}
 
 fini:
+	zdb_ddt_cleanup(spa);
+
 	if (os != NULL) {
 		close_objset(os, FTAG);
 	} else if (spa != NULL) {
