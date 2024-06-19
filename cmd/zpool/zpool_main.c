@@ -130,6 +130,10 @@ static int zpool_do_wait(int, char **);
 static zpool_compat_status_t zpool_do_load_compat(
     const char *, boolean_t *);
 
+enum zpool_options {
+        ZPOOL_OPTION_FORCE_ZIL_FAIL = 2048
+};
+
 /*
  * These libumem hooks provide a reasonable set of defaults for the allocator's
  * debugging facilities.
@@ -7114,13 +7118,22 @@ zpool_do_clear(int argc, char **argv)
 	boolean_t dryrun = B_FALSE;
 	boolean_t do_rewind = B_FALSE;
 	boolean_t xtreme_rewind = B_FALSE;
+	boolean_t force_zil_fail = B_FALSE;
 	uint32_t rewind_policy = ZPOOL_NO_REWIND;
-	nvlist_t *policy = NULL;
+	nvlist_t *nvopts = NULL;
 	zpool_handle_t *zhp;
 	char *pool, *device;
 
+	struct option long_options[] = {
+		{"force-zil-fail", no_argument, NULL,
+		    ZPOOL_OPTION_FORCE_ZIL_FAIL},
+		{0, 0, 0, 0}
+        };
+
+
 	/* check options */
-	while ((c = getopt(argc, argv, "FnX")) != -1) {
+	while ((c = getopt_long(argc, argv, "FnX", long_options,
+	    NULL)) != -1) {
 		switch (c) {
 		case 'F':
 			do_rewind = B_TRUE;
@@ -7130,6 +7143,9 @@ zpool_do_clear(int argc, char **argv)
 			break;
 		case 'X':
 			xtreme_rewind = B_TRUE;
+			break;
+		case ZPOOL_OPTION_FORCE_ZIL_FAIL:
+			force_zil_fail = B_TRUE;
 			break;
 		case '?':
 			(void) fprintf(stderr, gettext("invalid option '%c'\n"),
@@ -7151,11 +7167,17 @@ zpool_do_clear(int argc, char **argv)
 		usage(B_FALSE);
 	}
 
+	if (force_zil_fail && (dryrun || xtreme_rewind || do_rewind)) {
+		(void) fprintf(stderr, gettext(
+		    "--force-zil-fail with rewind option makes no sense\n"));
+		usage(B_FALSE);
+	}
 	if ((dryrun || xtreme_rewind) && !do_rewind) {
 		(void) fprintf(stderr,
 		    gettext("-n or -X only meaningful with -F\n"));
 		usage(B_FALSE);
 	}
+
 	if (dryrun)
 		rewind_policy = ZPOOL_TRY_REWIND;
 	else if (do_rewind)
@@ -7163,10 +7185,16 @@ zpool_do_clear(int argc, char **argv)
 	if (xtreme_rewind)
 		rewind_policy |= ZPOOL_EXTREME_REWIND;
 
-	/* In future, further rewind policy choices can be passed along here */
-	if (nvlist_alloc(&policy, NV_UNIQUE_NAME, 0) != 0 ||
-	    nvlist_add_uint32(policy, ZPOOL_LOAD_REWIND_POLICY,
+	if (nvlist_alloc(&nvopts, NV_UNIQUE_NAME, 0) != 0)
+		return (1);
+	if (nvlist_add_uint32(nvopts, ZPOOL_LOAD_REWIND_POLICY,
 	    rewind_policy) != 0) {
+		nvlist_free(nvopts);
+		return (1);
+	}
+	if (force_zil_fail && nvlist_add_boolean_value(nvopts,
+	    ZFS_CLEAR_FORCE_ZIL_FAIL, B_TRUE) != 0) {
+		nvlist_free(nvopts);
 		return (1);
 	}
 
@@ -7174,16 +7202,23 @@ zpool_do_clear(int argc, char **argv)
 	device = argc == 2 ? argv[1] : NULL;
 
 	if ((zhp = zpool_open_canfail(g_zfs, pool)) == NULL) {
-		nvlist_free(policy);
+		nvlist_free(nvopts);
 		return (1);
 	}
 
-	if (zpool_clear(zhp, device, policy) != 0)
+	if (zpool_clear(zhp, device, nvopts) != 0) {
 		ret = 1;
+		if (libzfs_errno(g_zfs) == EZFS_ZIL_FAILED) {
+			(void) fprintf(stderr, gettext("reboot is recommended "
+			    "to ensure the pool is returned to a known good "
+			    "state.\nto force it, rerun `zpool clear` with "
+			    "`--force-zil-failed`\n"));
+		}
+	}
 
 	zpool_close(zhp);
 
-	nvlist_free(policy);
+	nvlist_free(nvopts);
 
 	return (ret);
 }

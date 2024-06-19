@@ -1412,6 +1412,7 @@ typedef enum {
 	ZFS_ERR_RESILVER_IN_PROGRESS,
 	ZFS_ERR_REBUILD_IN_PROGRESS,
 	ZFS_ERR_BADPROP,
+	ZFS_ERR_ZIL_FAILED,
 } zfs_errno_t;
 
 /*
@@ -1513,6 +1514,11 @@ typedef enum {
  */
 #define	ZFS_WAIT_ACTIVITY		"wait_activity"
 #define	ZFS_WAIT_WAITED			"wait_waited"
+
+/*
+ * The following are names used when invoking ZFS_IOC_CLEAR.
+ */
+#define	ZFS_CLEAR_FORCE_ZIL_FAIL		"clear_zil_fail"
 
 /*
  * Flags for ZFS_IOC_VDEV_SET_STATE

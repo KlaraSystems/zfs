@@ -573,8 +573,6 @@ zil_alloc_lwb(zilog_t *zilog, blkptr_t *bp, boolean_t slog, uint64_t txg,
 	return (lwb);
 }
 
-static boolean_t zil_failed(zilog_t *zilog);
-
 static void
 zil_free_lwb(zilog_t *zilog, lwb_t *lwb)
 {
@@ -1017,9 +1015,10 @@ zil_check_log_chain(dsl_pool_t *dp, dsl_dataset_t *ds, void *tx)
 }
 
 /*
- * True if the ZIL has failed.
+ * True if the ZIL has failed. Note that this is done without taking a lock.
+ * The caller is expected to manage races their own way.
  */
-static boolean_t
+boolean_t
 zil_failed(zilog_t *zilog)
 {
 	return ((zilog->zl_unfail_txg > 0) ? B_TRUE : B_FALSE);

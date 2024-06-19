@@ -296,6 +296,9 @@ libzfs_error_description(libzfs_handle_t *hdl)
 	case EZFS_REBUILDING:
 		return (dgettext(TEXT_DOMAIN, "currently sequentially "
 		    "resilvering"));
+	case EZFS_ZIL_FAILED:
+		return (dgettext(TEXT_DOMAIN, "ZIL has failed on one or more "
+		    "datasets"));
 	case EZFS_UNKNOWN:
 		return (dgettext(TEXT_DOMAIN, "unknown error"));
 	default:
@@ -719,6 +722,9 @@ zpool_standard_error_fmt(libzfs_handle_t *hdl, int error, const char *fmt, ...)
 		break;
 	case ZFS_ERR_BADPROP:
 		zfs_verror(hdl, EZFS_BADPROP, fmt, ap);
+		break;
+	case ZFS_ERR_ZIL_FAILED:
+		zfs_verror(hdl, EZFS_ZIL_FAILED, fmt, ap);
 		break;
 	case ZFS_ERR_IOC_CMD_UNAVAIL:
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "the loaded zfs "

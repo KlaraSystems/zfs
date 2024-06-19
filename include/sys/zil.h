@@ -499,6 +499,8 @@ extern int	zil_commit(zilog_t *zilog, uint64_t oid);
 extern int	zil_commit_impl(zilog_t *zilog, uint64_t oid);
 extern void	zil_remove_async(zilog_t *zilog, uint64_t oid);
 
+extern boolean_t	zil_failed(zilog_t *zilog);
+
 extern int	zil_reset(const char *osname, void *txarg);
 extern int	zil_claim(struct dsl_pool *dp,
     struct dsl_dataset *ds, void *txarg);

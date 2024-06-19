@@ -5694,41 +5694,88 @@ zfs_ioc_clear(zfs_cmd_t *zc)
 	spa->spa_last_open_failed = 0;
 	mutex_exit(&spa_namespace_lock);
 
+	boolean_t force_zil_fail = B_FALSE;
+
+	nvlist_t *nvopts = NULL;
+	if (zc->zc_nvlist_src != 0) {
+		error = get_nvlist(zc->zc_nvlist_src, zc->zc_nvlist_src_size,
+		    zc->zc_iflags, &nvopts);
+		if (error != 0 && error != ENOENT)
+			return (error);
+	}
+
 	if (zc->zc_cookie & ZPOOL_NO_REWIND) {
+		if (nvopts != NULL) {
+			boolean_t opt;
+			error = nvlist_lookup_boolean_value(nvopts,
+			    ZFS_CLEAR_FORCE_ZIL_FAIL, &opt);
+			if (error != 0 && error != ENOENT)
+				goto done_opts;
+			if (error == 0)
+				force_zil_fail = opt;
+		}
 		error = spa_open(zc->zc_name, &spa, FTAG);
 	} else {
-		nvlist_t *policy;
+		if (nvopts == NULL) {
+			error = SET_ERROR(EINVAL);
+			goto done_opts;
+		}
+
 		nvlist_t *config = NULL;
+		error = spa_open_rewind(zc->zc_name, &spa, FTAG,
+		    nvopts, &config);
+		if (config != NULL) {
+			int err;
 
-		if (zc->zc_nvlist_src == 0)
-			return (SET_ERROR(EINVAL));
-
-		if ((error = get_nvlist(zc->zc_nvlist_src,
-		    zc->zc_nvlist_src_size, zc->zc_iflags, &policy)) == 0) {
-			error = spa_open_rewind(zc->zc_name, &spa, FTAG,
-			    policy, &config);
-			if (config != NULL) {
-				int err;
-
-				if ((err = put_nvlist(zc, config)) != 0)
-					error = err;
-				nvlist_free(config);
-			}
-			nvlist_free(policy);
+			if ((err = put_nvlist(zc, config)) != 0)
+				error = err;
+			nvlist_free(config);
 		}
 	}
 
+done_opts:
+	if (nvopts != NULL)
+		nvlist_free(nvopts);
+
 	if (error != 0)
 		return (error);
+
+	boolean_t suspended = spa_suspended(spa);
 
 	/*
 	 * If multihost is enabled, resuming I/O is unsafe as another
 	 * host may have imported the pool. Check for remote activity.
 	 */
-	if (spa_multihost(spa) && spa_suspended(spa) &&
+	if (suspended && spa_multihost(spa) &&
 	    spa_mmp_remote_host_activity(spa)) {
 		spa_close(spa, FTAG);
 		return (SET_ERROR(EREMOTEIO));
+	}
+
+	/* 
+	 * If the user hasn't explicitly asked that a failed ZIL be ignored,
+	 * check them all. If any have failed, eject.
+	 */
+	if (suspended && !force_zil_fail) {
+		boolean_t failed = B_FALSE;
+
+		dsl_pool_t *dp = spa->spa_dsl_pool;
+		for (int t = 0; t < TXG_SIZE; t++) {
+			for (zilog_t *zilog =
+			    txg_list_head(&dp->dp_dirty_zilogs, t);
+			    zilog != NULL; zilog =
+			    txg_list_next(&dp->dp_dirty_zilogs, zilog, t)) {
+				if (zil_failed(zilog)) {
+					failed = B_TRUE;
+					break;
+				}
+			}
+		}
+
+		if (failed) {
+			spa_close(spa, FTAG);
+			return (SET_ERROR(ZFS_ERR_ZIL_FAILED));
+		}
 	}
 
 	spa_vdev_state_enter(spa, SCL_NONE);
