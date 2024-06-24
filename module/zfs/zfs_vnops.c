@@ -74,6 +74,10 @@ zfs_fsync(znode_t *zp, int syncflag, cred_t *cr)
 
 	err = zil_commit(zfsvfs->z_log, zp->z_id);
 
+	if (err)
+		cmn_err(CE_WARN, "zfs_fsync: zil_commit err=%d, obj=%llu",
+		    err, (u_longlong_t)zp->z_id);
+
 	tsd_set(zfs_fsyncer_key, NULL);
 
 	ZFS_EXIT(zfsvfs);
