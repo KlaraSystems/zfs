@@ -1212,6 +1212,8 @@ dmu_tx_unassign(dmu_tx_t *tx)
 	tx->tx_txg = 0;
 }
 
+static void dmu_tx_wait_flags(dmu_tx_t *, uint64_t);
+
 /*
  * Assign tx to a transaction group; `flags` is a bitmask:
  *
@@ -1333,7 +1335,7 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 		if (suspended)
 			tx->tx_break_on_suspend = B_FALSE;
 
-		dmu_tx_wait(tx);
+		dmu_tx_wait_flags(tx, 0);
 
 		/*
 		 * Reset tx_break_on_suspend for DMU_TX_SUSPEND. We do this
@@ -1349,8 +1351,8 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	return (0);
 }
 
-void
-dmu_tx_wait(dmu_tx_t *tx)
+static void
+dmu_tx_wait_flags(dmu_tx_t *tx, uint64_t twflags)
 {
 	spa_t *spa = tx->tx_pool->dp_spa;
 	dsl_pool_t *dp = tx->tx_pool;
@@ -1406,7 +1408,8 @@ dmu_tx_wait(dmu_tx_t *tx)
 		 * obtain a tx.  If that's the case then tx_lasttried_txg
 		 * would not have been set.
 		 */
-		txg_wait_synced_flags(dp, spa_last_synced_txg(spa) + 1, flags);
+		txg_wait_synced_flags(dp, spa_last_synced_txg(spa) + 1,
+		    twflags);
 	} else if (tx->tx_needassign_txh) {
 		dnode_t *dn = tx->tx_needassign_txh->txh_dnode;
 
@@ -1421,10 +1424,17 @@ dmu_tx_wait(dmu_tx_t *tx)
 		 * out a TXG at which point we'll hopefully have synced
 		 * a portion of the changes.
 		 */
-		txg_wait_synced_flags(dp, spa_last_synced_txg(spa) + 1, flags);
+		txg_wait_synced_flags(dp, spa_last_synced_txg(spa) + 1,
+		    twflags);
 	}
 
 	spa_tx_assign_add_nsecs(spa, gethrtime() - before);
+}
+
+void
+dmu_tx_wait(dmu_tx_t *tx)
+{
+	dmu_tx_wait_flags(tx, TXG_WAIT_NONE);
 }
 
 static void
