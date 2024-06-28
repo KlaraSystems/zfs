@@ -67,6 +67,7 @@ COMMON_H = \
 	sys/efi_partition.h \
 	sys/frame.h \
 	sys/hkdf.h \
+	sys/lockout.h \
 	sys/metaslab.h \
 	sys/metaslab_impl.h \
 	sys/mmp.h \
