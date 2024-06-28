@@ -82,6 +82,11 @@ typedef enum {
 
 	/* If the pool suspends while waiting, abort and return ESHUTDOWN. */
 	TXG_WAIT_SUSPEND = (1 << 1),
+	/*
+	 * If lockout state changes while waiting, abort and return EAGAIN. Caller
+	 * should check if the lockout applies to them and if not, make the call again.
+	 */
+	TXG_WAIT_LOCKOUT = (1 << 2),
 } txg_wait_flag_t;
 
 struct dsl_pool;

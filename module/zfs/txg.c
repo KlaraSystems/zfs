@@ -709,7 +709,7 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, txg_wait_flag_t flags)
 	int error = 0;
 	tx_state_t *tx = &dp->dp_tx;
 
-	ASSERT0(flags & ~(TXG_WAIT_SIGNAL | TXG_WAIT_SUSPEND));
+	ASSERT0(flags & ~(TXG_WAIT_SIGNAL | TXG_WAIT_SUSPEND) | TXG_WAIT_LOCKOUT);
 	ASSERT(!dsl_pool_config_held(dp));
 
 	mutex_enter(&tx->tx_sync_lock);
@@ -741,6 +741,18 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, txg_wait_flag_t flags)
 		    (u_longlong_t)tx->tx_synced_txg,
 		    (u_longlong_t)tx->tx_sync_txg_waiting, dp);
 		cv_broadcast(&tx->tx_sync_more_cv);
+
+		/*
+		 * If caller is interested in lockouts and a lockout state
+		 * is set, inform them immediately, regardless of wait state
+		 * If lockout state is set, inform caller immediately. If they
+		 * don't care, they can call back in.
+		 */
+		if ((flags & TXG_WAIT_LOCKOUT) &&
+		    dp->dp_lockout != LOCKOUT_NONE) {
+			error = SET_ERROR(EAGAIN);
+			break;
+		}
 
 		if (flags & TXG_WAIT_SIGNAL) {
 			/*
