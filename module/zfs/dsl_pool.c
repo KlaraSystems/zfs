@@ -1620,6 +1620,31 @@ dsl_pool_config_held_writer(dsl_pool_t *dp)
 	return (RRW_WRITE_HELD(&dp->dp_config_rwlock));
 }
 
+void
+dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
+{
+	/*
+	 * XXX what are the locking requirements here? maybe just dp_lock,
+	 *     probably not dp_config_rwlock? because this is an internal tool
+	 *     and I think we want it to work then the pool is suspended?
+	 *       -- robn, 2024-06-28
+	 */
+
+	dp->dp_lockout = lockout;
+
+	/* XXX propagate to dataset lockouts */
+
+	/* Wake up anyone stuck in txg_wait_sync_flags */
+	/* XXX move to txg.c, name it txg_poke() */
+	tx_state_t *tx = &dp->dp_tx;
+	mutex_enter(&tx->tx_sync_lock);
+	cv_broadcast(&tx->tx_sync_done_cv);
+	mutex_exit(&tx->tx_sync_lock);
+
+	/* XXX probably dbgmsg */
+	cmn_err(CE_NOTE, "dsl_pool_lockout: set lockout state to %d", dp->dp_lockout);
+}
+
 EXPORT_SYMBOL(dsl_pool_config_enter);
 EXPORT_SYMBOL(dsl_pool_config_exit);
 
