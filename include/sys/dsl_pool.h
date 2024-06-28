@@ -23,6 +23,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013, 2018 by Delphix. All rights reserved.
  * Copyright 2016 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright (c) 2024, Klara, Inc.
  */
 
 #ifndef	_SYS_DSL_POOL_H
@@ -38,6 +39,7 @@
 #include <sys/arc.h>
 #include <sys/bpobj.h>
 #include <sys/bptree.h>
+#include <sys/lockout.h>
 #include <sys/rrwlock.h>
 #include <sys/dsl_synctask.h>
 #include <sys/mmp.h>
@@ -129,6 +131,9 @@ typedef struct dsl_pool {
 	wmsum_t dp_mos_compressed_delta;
 	wmsum_t dp_mos_uncompressed_delta;
 
+	/* pool-wide lockout state */
+	lockout_t dp_lockout;
+
 	/*
 	 * Time of most recently scheduled (furthest in the future)
 	 * wakeup for delayed transactions.
@@ -207,6 +212,8 @@ void dsl_pool_rele(dsl_pool_t *dp, const void *tag);
 
 int dsl_pool_create_obsolete_bpobj(dsl_pool_t *dp, dmu_tx_t *tx);
 void dsl_pool_destroy_obsolete_bpobj(dsl_pool_t *dp, dmu_tx_t *tx);
+
+void dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout);
 
 #ifdef	__cplusplus
 }

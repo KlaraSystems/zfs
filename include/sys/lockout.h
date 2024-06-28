@@ -29,6 +29,14 @@
 extern "C" {
 #endif
 
+typedef enum {
+	LOCKOUT_NONE	= 0,
+	LOCKOUT_SUSPEND,
+	LOCKOUT_READONLY,
+
+	LOCKOUT_MAX
+} lockout_t;
+
 #ifdef	__cplusplus
 }
 #endif
