@@ -5440,6 +5440,25 @@ zpool_get_bootenv(zpool_handle_t *zhp, nvlist_t **nvlp)
 	return (error);
 }
 
+int
+zpool_lockout(zpool_handle_t *zhp)
+{
+	zfs_cmd_t zc = {"\0"};
+	libzfs_handle_t *hdl = zhp->zpool_hdl;
+	char errbuf[ERRBUFLEN];
+
+	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
+
+	if (zfs_ioctl(hdl, ZFS_IOC_POOL_LOCKOUT, &zc) != 0) {
+		(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN,
+		    "cannot lockout '%s'"), zhp->zpool_name);
+		(void) zpool_standard_error(hdl, errno, errbuf);
+		return (-1);
+	}
+
+	return (0);
+}
+
 /*
  * Attempt to read and parse feature file(s) (from "compatibility" property).
  * Files contain zpool feature names, comma or whitespace-separated.

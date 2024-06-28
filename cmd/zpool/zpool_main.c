@@ -135,6 +135,7 @@ static int zpool_do_version(int, char **);
 static int zpool_do_wait(int, char **);
 
 static int zpool_do_ddt_prune(int, char **);
+static int zpool_do_lockout(int, char **);
 
 static int zpool_do_help(int argc, char **argv);
 
@@ -187,6 +188,7 @@ typedef enum {
 	HELP_IOSTAT,
 	HELP_LABELCLEAR,
 	HELP_LIST,
+	HELP_LOCKOUT,
 	HELP_OFFLINE,
 	HELP_ONLINE,
 	HELP_PREFETCH,
@@ -447,8 +449,8 @@ static zpool_command_t command_table[] = {
 	{ "sync",	zpool_do_sync,		HELP_SYNC		},
 	{ NULL },
 	{ "wait",	zpool_do_wait,		HELP_WAIT		},
-	{ NULL },
 	{ "ddtprune",	zpool_do_ddt_prune,	HELP_DDT_PRUNE		},
+	{ "lockout",	zpool_do_lockout,	HELP_LOCKOUT		},
 };
 
 #define	NCOMMAND	(ARRAY_SIZE(command_table))
@@ -510,7 +512,10 @@ get_usage(zpool_help_t idx)
 		    "[--json-int, --json-pool-key-guid]] ...\n"
 		    "\t    [-T d|u] [pool] [interval [count]]\n"));
 	case HELP_PREFETCH:
-		return (gettext("\tprefetch [-t <type>] <pool>\n"));
+		return (gettext("\tprefetch -t <type> [<type opts>] <pool>\n"
+		    "\t    -t ddt <pool>\n"));
+	case HELP_LOCKOUT:
+		return (gettext("\tlockout <pool>\n"));
 	case HELP_OFFLINE:
 		return (gettext("\toffline [--power]|[[-f][-t]] <pool> "
 		    "<device> ...\n"));
@@ -14097,6 +14102,7 @@ zpool_do_ddt_prune(int argc, char **argv)
 			usage(B_FALSE);
 		}
 	}
+
 	argc -= optind;
 	argv += optind;
 
@@ -14120,6 +14126,48 @@ zpool_do_ddt_prune(int argc, char **argv)
 	zpool_close(zhp);
 
 	return (error);
+}
+
+int
+zpool_do_lockout(int argc, char **argv)
+{
+	int c;
+	char *pool;
+	zpool_handle_t *zhp;
+	int ret;
+
+	/* check options */
+	while ((c = getopt(argc, argv, "")) != -1) {
+		switch (c) {
+		case '?':
+			(void) fprintf(stderr, gettext("invalid option '%c'\n"),
+			    optopt);
+			usage(B_FALSE);
+		}
+	}
+	argc -= optind;
+	argv += optind;
+
+	/* check arguments */
+	if (argc < 1) {
+		(void) fprintf(stderr, gettext("missing pool argument\n"));
+		usage(B_FALSE);
+	}
+	if (argc > 1) {
+		(void) fprintf(stderr, gettext("too many arguments\n"));
+		usage(B_FALSE);
+	}
+
+	pool = argv[0];
+
+	if ((zhp = zpool_open_canfail(g_zfs, pool)) == NULL)
+		return (1);
+
+	ret = (zpool_lockout(zhp) != 0);
+
+	zpool_close(zhp);
+
+	return (ret);
 }
 
 static int

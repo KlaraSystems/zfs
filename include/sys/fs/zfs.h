@@ -1716,6 +1716,7 @@ typedef enum zfs_ioc {
 	ZFS_IOC_DDT_PRUNE,			/* 0x5a59 */
 	ZFS_IOC_POOL_CONDENSE,			/* 0x5a5a */
 	ZFS_IOC_POOL_SET_FORCED_EXIT_REQUIRED,	/* 0x5a5b */
+	ZFS_IOC_POOL_LOCKOUT,			/* 0x5a5c */
 
 	/*
 	 * Per-platform (Optional) - 8/128 numbers reserved.

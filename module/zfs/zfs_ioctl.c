@@ -7848,6 +7848,33 @@ zfs_ioc_pool_condense(const char *pool, nvlist_t *innvl, nvlist_t *onvl)
 }
 
 /*
+ * XXX _pool_lockout is just a hackjob to give me something to hook on to.
+ *     this comment is here to remind me of this when later -- robn, 2024-06-28
+ */
+/*
+ * inputs:
+ * poolname             name of the pool
+ */
+static const zfs_ioc_key_t zfs_keys_pool_lockout[] = {
+};
+
+static int
+zfs_ioc_pool_lockout(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
+{
+	dsl_pool_t *dp;
+	int error;
+
+	if ((error = dsl_pool_hold(poolname, FTAG, &dp)) != 0)
+		return (error);
+
+	dsl_pool_lockout(dp, LOCKOUT_READONLY);
+
+	dsl_pool_rele(dp, FTAG);
+
+	return (0);
+}
+
+/*
  * Load a user's wrapping key into the kernel.
  * innvl: {
  *     "hidden_args" -> { "wkeydata" -> value }
@@ -8293,6 +8320,11 @@ zfs_ioctl_init(void)
 	    zfs_ioc_ddt_prune, zfs_secpolicy_config, POOL_NAME,
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE,
 	    zfs_keys_ddt_prune, ARRAY_SIZE(zfs_keys_ddt_prune));
+
+	zfs_ioctl_register("lockout", ZFS_IOC_POOL_LOCKOUT,
+	    zfs_ioc_pool_lockout, zfs_secpolicy_config, POOL_NAME,
+	    POOL_CHECK_NONE, B_FALSE, B_FALSE,
+	    zfs_keys_pool_lockout, ARRAY_SIZE(zfs_keys_pool_lockout));
 
 	/* IOCTLS that use the legacy function signature */
 
