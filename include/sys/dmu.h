@@ -304,6 +304,8 @@ typedef enum {
 	 * assignment, regardless of the value of the failmode= property.
 	 */
 	DMU_TX_SUSPEND		= (1 << 2),
+
+	DMU_TX_NOLOCKOUT	= (1 << 3),
 } dmu_tx_flag_t;
 
 void byteswap_uint64_array(void *buf, size_t size);

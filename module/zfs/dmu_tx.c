@@ -50,6 +50,7 @@ dmu_tx_stats_t dmu_tx_stats = {
 	{ "dmu_tx_assigned",		KSTAT_DATA_UINT64 },
 	{ "dmu_tx_delay",		KSTAT_DATA_UINT64 },
 	{ "dmu_tx_error",		KSTAT_DATA_UINT64 },
+	{ "dmu_tx_lockout",		KSTAT_DATA_UINT64 },
 	{ "dmu_tx_suspended",		KSTAT_DATA_UINT64 },
 	{ "dmu_tx_group",		KSTAT_DATA_UINT64 },
 	{ "dmu_tx_memory_reserve",	KSTAT_DATA_UINT64 },
@@ -1072,7 +1073,7 @@ dmu_tx_delay(dmu_tx_t *tx, uint64_t dirty)
  * decreasing performance.
  */
 static int
-dmu_tx_try_assign(dmu_tx_t *tx)
+dmu_tx_try_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 {
 	spa_t *spa = tx->tx_pool->dp_spa;
 
@@ -1083,6 +1084,17 @@ dmu_tx_try_assign(dmu_tx_t *tx)
 		return (SET_ERROR(EIO));
 	}
 
+	/*
+	 * If the dataset is in lockout and the caller didn't request
+	 * we ignore it, then this can't proceed.
+	 *
+	 * XXX this is actually checking pool lockout; change to dataset
+	 *     once the lockout is propagated to datasets.
+	 */
+	if (!(flags & DMU_TX_NOLOCKOUT) && tx->tx_pool->dp_lockout) {
+		DMU_TX_STAT_BUMP(dmu_tx_lockout);
+		return (SET_ERROR(EAGAIN));
+	}
 	if (spa_suspended(spa) && !SPA_EXITING(spa)) {
 		DMU_TX_STAT_BUMP(dmu_tx_suspended);
 
@@ -1240,6 +1252,11 @@ static void dmu_tx_wait_flags(dmu_tx_t *, uint64_t);
  * cause dmu_tx_assign() (and dmu_tx_wait()) to block until the pool resumes.
  * If this flag is not set and the pool suspends, the return will be either
  * ERESTART or EIO, depending on the value of the pool's failmode= property.
+ * If DMU_TX_NOLOCKOUT is set, this indicates that this tx should ignore any
+ * pool or dataset lockout state encountered while it is in progress. Most
+ * lockouts are intended to block user access, so generally this will only
+ * be used by internal calls (ie not VFS operations). If this flag is _not_
+ * set and the pool is locked out, this function returns EAGAIN.
  *
  * It is guaranteed that subsequent successful calls to dmu_tx_assign()
  * will assign the tx to monotonically increasing txgs. Of course this is
@@ -1263,7 +1280,7 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	int err;
 
 	ASSERT0(tx->tx_txg);
-	ASSERT0(flags & ~(DMU_TX_WAIT | DMU_TX_NOTHROTTLE | DMU_TX_SUSPEND));
+	ASSERT0(flags & ~(DMU_TX_WAIT | DMU_TX_NOTHROTTLE | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 	IMPLY(flags & DMU_TX_SUSPEND, flags & DMU_TX_WAIT);
 	ASSERT(!dsl_pool_sync_context(tx->tx_pool));
 
@@ -1276,7 +1293,10 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	if (!(flags & DMU_TX_SUSPEND))
 		tx->tx_break_on_suspend = B_TRUE;
 
-	while ((err = dmu_tx_try_assign(tx)) != 0) {
+	if (flags & DMU_TX_NOLOCKOUT)
+		tx->tx_assign_nolockout = B_TRUE;
+
+	while ((err = dmu_tx_try_assign(tx, flags)) != 0) {
 		dmu_tx_unassign(tx);
 
 		boolean_t suspended = (err == ESHUTDOWN);
@@ -1335,7 +1355,27 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 		if (suspended)
 			tx->tx_break_on_suspend = B_FALSE;
 
-		dmu_tx_wait_flags(tx, 0);
+		/*
+		 * Wait until there's room in this txg, or until its been
+		 * synced out and a new one is available.
+		 *
+		 * We always ask to be informed if a lockout occurs, because
+		 * it may have been locked out between when dmu_tx_try_assign()
+		 * failed and any time up until the wait starts.
+		 *
+		 * XXX hmm and that points towards where any lockout lock
+		 *     must go. The broadcast will wake the wait sleep, so
+		 *     so probably the lockout check needs to be after the
+		 *     wait cv lock is taken. Is that enough though? We'll
+		 *     see in a bit, I guess. And this is why "think very
+		 *     hard about locking" is on my list, right.
+		 *       -- robn, 2024-07-11
+		 *
+		 * If there is a lockout while we're waiting and our caller
+		 * has passed DMU_TX_NOLOCKOUT, we'll just end up sleeping
+		 * in dmu_tx_try_assign() again.
+		 */
+		dmu_tx_wait_flags(tx, TXG_WAIT_LOCKOUT);
 
 		/*
 		 * Reset tx_break_on_suspend for DMU_TX_SUSPEND. We do this
@@ -1436,7 +1476,43 @@ dmu_tx_wait_flags(dmu_tx_t *tx, uint64_t twflags)
 void
 dmu_tx_wait(dmu_tx_t *tx)
 {
-	dmu_tx_wait_flags(tx, TXG_WAIT_NONE);
+	/*
+	 * If dmu_tx_assign() was called without DMU_TX_NOLOCKOUT, that is, the
+	 * wait should be interrupted on lockout, then this wait must also be
+	 * interrupted on lockout.
+	 *
+	 * The reason for this is as follows. The only way the caller should be
+	 * here is if dmu_tx_assign() returned ERESTART, and they are waiting
+	 * before aborting the tx and retrying. However if the assign failed
+	 * because the pool suspended, then this wait can last forever.
+	 *
+	 * Some time later, if the operator performs some action that sets a
+	 * lockout, then we want this wait to end now, so the caller can call
+	 * dmu_tx_abort() and retry. If the lockout is still in place, then
+	 * it will hit it on the next call to dmu_tx_assign() (if not earlier)
+	 * and not try again.
+	 *
+	 * XXX of course, if the lockout is lifted between when we eject here
+	 *     and the next time we come around, then they won't be thrown
+	 *     out the next time around. this means we need to ensure we
+	 *     simulate the effects of a txg wait here, even if we don't
+	 *     actually wait. almost certainly that is achieved by doing one
+	 *     full txg_wait_synced(0) before lifting the lockout, to ensure
+	 *     the change is assigned to the next txg. but then, that means
+	 *     after this is called, the subsequent dmu_tx_abort() must appear
+	 *     to have moved on too. since its just a "cancel" callback,
+	 *     hopefully that is easy, but if it goes for the currently open
+	 *     txg from the spa, could be troublesome. same goes for
+	 *     dmu_tx_assign() really, but istm a successful assign followed
+	 *     by a wait is just gonna cause a deadlock, because we're
+	 *     sleeping with txg holds in place. not gonna worry too hard
+	 *     about that right now.
+	 *
+	 *     tl;dr: make the next guy think we waited, one way or another.
+	 *       -- robn, 2024-07-11
+	 */
+	return (dmu_tx_wait_flags(tx,
+	    tx->tx_assign_nolockout ? TXG_WAIT_NONE : TXG_WAIT_LOCKOUT));
 }
 
 static void

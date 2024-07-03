@@ -87,6 +87,8 @@ struct dmu_tx {
 
 	/* whether dmu_tx_wait() should return on suspend */
 	boolean_t tx_break_on_suspend;
+	/* tx was assigned ignoring lockout */
+	boolean_t tx_assign_nolockout;
 
 	int tx_err;
 };
@@ -128,6 +130,7 @@ typedef struct dmu_tx_stats {
 	kstat_named_t dmu_tx_assigned;
 	kstat_named_t dmu_tx_delay;
 	kstat_named_t dmu_tx_error;
+	kstat_named_t dmu_tx_lockout;
 	kstat_named_t dmu_tx_suspended;
 	kstat_named_t dmu_tx_group;
 	kstat_named_t dmu_tx_memory_reserve;
