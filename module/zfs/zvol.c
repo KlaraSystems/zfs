@@ -1318,6 +1318,10 @@ zvol_first_open(zvol_state_t *zv, boolean_t readonly)
 		spa_open_ref(dmu_objset_spa(os), zv);
 	}
 
+        mutex_enter(&os->os_user_ptr_lock);
+        dmu_objset_set_user(os, zv);
+        mutex_exit(&os->os_user_ptr_lock);
+
 	return (error);
 }
 
@@ -1333,6 +1337,10 @@ zvol_last_close(zvol_state_t *zv)
 	spa_t *spa = dmu_objset_spa(zv->zv_objset);
 
 	zvol_shutdown_zv(zv);
+
+        mutex_enter(&zv->zv_objset->os_user_ptr_lock);
+        dmu_objset_set_user(zv->zv_objset, NULL);
+        mutex_exit(&zv->zv_objset->os_user_ptr_lock);
 
 	dmu_objset_disown(zv->zv_objset, 1, zv);
 	zv->zv_objset = NULL;
