@@ -28,6 +28,9 @@
 #define	_SYS_ZFS_VFSOPS_H
 
 #ifdef _KERNEL
+#include <sys/lockout.h>
+#include <sys/dmu_objset.h>
+#include <sys/spa_impl.h>
 #include <sys/zfs_vfsops_os.h>
 
 /*
@@ -52,5 +55,35 @@ zfsvfs_error(zfsvfs_t *zfsvfs)
 #endif
 
 extern void zfsvfs_update_fromname(const char *, const char *);
+
+/*
+ * XXX I'm pretty sure this doesn't really belong here; once the comment
+ *     below is fulfilled and the lockout is in zfsvfs, it probably moves
+ *     alongside zfsvfs_enter() and such -- robn, 2024-07-09
+ */
+#ifdef _KERNEL
+static inline int
+zfsvfs_lockout_error(zfsvfs_t *zfsvfs)
+{
+	/*
+	 * XXX this is actually checking pool lockout; change to dataset
+	 *     once the lockout is propagated to datasets.
+	 *
+	 *     that said, it'd be better to actually wire this directly into
+	 *     zfsvfs, for zfs_enter and such too, and also what the hell is
+	 *     even the locking story for that path? for this we need a
+	 *     callback mech, and also a condition filter (eg only writes for
+	 *     LOCKOUT_READONLY). ideas already had, but maybe I didn't write
+	 *     them down before? -- robn, 2024-07-09
+	 */
+	switch (zfsvfs->z_os->os_spa->spa_dsl_pool->dp_lockout) {
+	case LOCKOUT_READONLY:
+		return (SET_ERROR(EROFS));
+	default:
+		/* XXX idk I guess? -- robn, 2024-07-09 */
+		return (SET_ERROR(EAGAIN));
+	}
+}
+#endif
 
 #endif /* _SYS_ZFS_VFSOPS_H */
