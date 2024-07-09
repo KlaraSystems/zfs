@@ -1566,6 +1566,8 @@ zfs_extend(znode_t *zp, uint64_t end)
 
 	error = dmu_tx_assign(tx, DMU_TX_WAIT);
 	if (error) {
+		if (error == EAGAIN)
+			error = zfsvfs_lockout_error(zfsvfs);
 		dmu_tx_abort(tx);
 		zfs_rangelock_exit(lr);
 		return (error);
@@ -1743,6 +1745,8 @@ zfs_trunc(znode_t *zp, uint64_t end)
 	error = dmu_free_long_range(zfsvfs->z_os, zp->z_id, end,
 	    DMU_OBJECT_END);
 	if (error) {
+		if (error == EAGAIN)
+			error = zfsvfs_lockout_error(zfsvfs);
 		zfs_rangelock_exit(lr);
 		return (error);
 	}
@@ -1752,6 +1756,8 @@ zfs_trunc(znode_t *zp, uint64_t end)
 	dmu_tx_mark_netfree(tx);
 	error = dmu_tx_assign(tx, DMU_TX_WAIT);
 	if (error) {
+		if (error == EAGAIN)
+			error = zfsvfs_lockout_error(zfsvfs);
 		dmu_tx_abort(tx);
 		zfs_rangelock_exit(lr);
 		return (error);
@@ -1823,6 +1829,8 @@ log:
 	zfs_sa_upgrade_txholds(tx, zp);
 	error = dmu_tx_assign(tx, DMU_TX_WAIT);
 	if (error) {
+		if (error == EAGAIN)
+			error = zfsvfs_lockout_error(zfsvfs);
 		dmu_tx_abort(tx);
 		goto out;
 	}

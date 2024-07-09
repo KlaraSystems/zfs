@@ -2201,6 +2201,8 @@ top:
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		dmu_tx_abort(tx);
 		zfs_acl_free(aclp);

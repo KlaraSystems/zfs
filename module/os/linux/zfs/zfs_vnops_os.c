@@ -132,6 +132,10 @@
  *	this operation has already called dmu_tx_wait().  This will ensure
  *	that we don't retry forever, waiting a short bit each time.
  *
+ *	If dmu_tx_assign() is passed DMU_TX_LOCKOUT and returns EAGAIN, there
+ *	is a lockout in place.  zfs_lockout_error() to get the appropriate
+ *	error to return to the caller.
+ *
  *  (5)	If the operation succeeded, generate the intent log entry for it
  *	before dropping locks.  This ensures that the ordering of events
  *	in the intent log matches the order in which they actually occurred.
@@ -163,6 +167,8 @@
  *			dmu_tx_wait(tx);
  *			dmu_tx_abort(tx);
  *			goto top;
+ *		} else if (error == EAGAIN) {
+ *			error = zfsvfs_lockout_error(zfsvfs);
  *		}
  *		dmu_tx_abort(tx);	// abort DMU tx
  *		zfs_exit(zfsvfs);	// finished in zfs
@@ -768,6 +774,8 @@ top:
 				dmu_tx_wait(tx);
 				dmu_tx_abort(tx);
 				goto top;
+			} else if (error == EAGAIN) {
+				error = zfsvfs_lockout_error(zfsvfs);
 			}
 			zfs_acl_ids_free(&acl_ids);
 			dmu_tx_abort(tx);
@@ -965,6 +973,8 @@ top:
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		zfs_acl_ids_free(&acl_ids);
 		dmu_tx_abort(tx);
@@ -1142,6 +1152,8 @@ top:
 			if (xzp)
 				zrele(xzp);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		if (realnmp)
 			pn_free(realnmp);
@@ -1387,6 +1399,8 @@ top:
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		zfs_acl_ids_free(&acl_ids);
 		dmu_tx_abort(tx);
@@ -1544,6 +1558,8 @@ top:
 			dmu_tx_abort(tx);
 			zrele(zp);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		dmu_tx_abort(tx);
 		zrele(zp);
@@ -1859,8 +1875,11 @@ zfs_setattr_dir(znode_t *dzp)
 			dmu_tx_hold_sa(tx, zp->z_sa_hdl, B_FALSE);
 
 		err = dmu_tx_assign(tx, DMU_TX_WAIT);
-		if (err)
+		if (err) {
+			if (err == EAGAIN)
+				err = zfsvfs_lockout_error(zfsvfs);
 			break;
+		}
 
 		mutex_enter(&dzp->z_lock);
 
@@ -2431,8 +2450,11 @@ top:
 	zfs_sa_upgrade_txholds(tx, zp);
 
 	err = dmu_tx_assign(tx, DMU_TX_WAIT);
-	if (err)
+	if (err) {
+		if (err == EAGAIN)
+			err = zfsvfs_lockout_error(zfsvfs);
 		goto out;
+	}
 
 	count = 0;
 	/*
@@ -3153,6 +3175,8 @@ top:
 			if (tzp)
 				zrele(tzp);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		dmu_tx_abort(tx);
 		zrele(szp);
@@ -3447,6 +3471,8 @@ top:
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		zfs_acl_ids_free(&acl_ids);
 		dmu_tx_abort(tx);
@@ -3706,6 +3732,8 @@ top:
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
+		} else if (error == EAGAIN) {
+			error = zfsvfs_lockout_error(zfsvfs);
 		}
 		dmu_tx_abort(tx);
 		zfs_exit(zfsvfs, FTAG);
@@ -3950,6 +3978,13 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 	dmu_tx_hold_sa(tx, zp->z_sa_hdl, ZFS_SEQ_MAY_GROW(zp));
 	zfs_sa_upgrade_txholds(tx, zp);
 
+	/*
+	 * XXX not sure if we should ignore lockout here. We want to avoid
+	 *     writing new changes, but still want to sync out ones from
+	 *     before the lockout. Seems like we don't really know that for
+	 *     mmap? unless we want to do something awful like flush out all
+	 *     the dirty pages at lockout time? -- robn, 2024-07-09
+	 */
 	err = dmu_tx_assign(tx, DMU_TX_WAIT);
 	if (err != 0) {
 		dmu_tx_abort(tx);
@@ -4100,6 +4135,8 @@ zfs_dirty_inode(struct inode *ip, int flags)
 
 	error = dmu_tx_assign(tx, DMU_TX_WAIT);
 	if (error) {
+		if (error == EAGAIN)
+			error = zfsvfs_lockout_error(zfsvfs);
 		dmu_tx_abort(tx);
 		goto out;
 	}
