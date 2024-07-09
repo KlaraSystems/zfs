@@ -1620,19 +1620,62 @@ dsl_pool_config_held_writer(dsl_pool_t *dp)
 	return (RRW_WRITE_HELD(&dp->dp_config_rwlock));
 }
 
+static int
+dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
+{
+	(void) dp;
+	(void) arg;
+
+	/*
+	 * XXX understand out locking through here. it's all in-memory,
+	 *     mostly just need to make sure things are not destroyed out
+	 *     from under us. good bet dmu_objset_find_dp already took
+	 *     a dataset lock for us? could be enough, but need to take
+	 *     care if we're want to push this out to workers
+	 *       -- robn, 2024-07-09 */
+
+	objset_t *os = ds->ds_objset;
+	if (os == NULL)
+		return (0);
+
+	mutex_enter(&os->os_user_ptr_lock);
+	void *top = dmu_objset_get_user(os);
+	mutex_exit(&os->os_user_ptr_lock);
+
+	switch (dmu_objset_type(os)) {
+	case DMU_OST_ZFS:
+		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: apply lockout to "
+		    "filesystem %llu zfsvfs %px",
+		    (u_longlong_t)dmu_objset_id(os), top);
+		break;
+	case DMU_OST_ZVOL:
+		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: apply lockout to "
+		    "volume %llu zvol_state %px",
+		    (u_longlong_t)dmu_objset_id(os), top);
+		break;
+	default:
+		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: don't know how to "
+		    "lockout type %d objset %llu, skipping",
+		    dmu_objset_type(os), (u_longlong_t)dmu_objset_id(os));
+		break;
+	}
+
+	return (0);
+}
+
 void
 dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
 {
 	/*
-	 * XXX what are the locking requirements here? maybe just dp_lock,
-	 *     probably not dp_config_rwlock? because this is an internal tool
-	 *     and I think we want it to work then the pool is suspended?
+	 * XXX what are the locking requirements here? probably just dp_lock?
 	 *       -- robn, 2024-06-28
 	 */
 
 	dp->dp_lockout = lockout;
 
-	/* XXX propagate to dataset lockouts */
+	/* propagate to dataset lockouts */
+	dmu_objset_find_dp(dp, dp->dp_root_dir_obj, dsl_pool_lockout_ds_cb,
+	    &lockout, DS_FIND_CHILDREN);
 
 	/* Wake up anyone stuck in txg_wait_sync_flags */
 	/* XXX move to txg.c, name it txg_poke() */
