@@ -185,7 +185,7 @@ vdev_initialize_change_state(vdev_t *vd, vdev_initializing_state_t new_state)
 	vd->vdev_initialize_state = new_state;
 
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	err = dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND);
+	err = dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT);
 	if (err && SPA_EXITING(spa)) {
 		dmu_tx_abort(tx);
 		kmem_free(guid, sizeof (uint64_t));
@@ -287,7 +287,7 @@ vdev_initialize_write(vdev_t *vd, uint64_t start, uint64_t size, abd_t *data)
 	mutex_exit(&vd->vdev_initialize_io_lock);
 
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	err = dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND);
+	err = dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT);
 	if (err && SPA_EXITING(spa)) {
 		dmu_tx_abort(tx);
 		mutex_enter(&vd->vdev_initialize_io_lock);

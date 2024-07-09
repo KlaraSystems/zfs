@@ -2167,7 +2167,7 @@ static void
 spa_unload_log_sm_flush_all(spa_t *spa)
 {
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND));
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 
 	spa_log_flushall_start(spa, SPA_LOG_FLUSHALL_EXPORT,
 	    dmu_tx_get_txg(tx));

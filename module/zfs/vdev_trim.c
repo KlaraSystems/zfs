@@ -355,7 +355,7 @@ vdev_trim_change_state(vdev_t *vd, vdev_trim_state_t new_state,
 	vd->vdev_trim_state = new_state;
 
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND));
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 	dsl_sync_task_nowait(spa_get_dsl(spa), vdev_trim_zap_update_sync,
 	    guid, tx);
 
@@ -541,7 +541,8 @@ vdev_trim_range(trim_args_t *ta, uint64_t start, uint64_t size)
 	mutex_exit(&vd->vdev_trim_io_lock);
 
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND));
+	// FIXME: use a single macro for these flags, as they are repeated often
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_LOCKOUT));
 	uint64_t txg = dmu_tx_get_txg(tx);
 
 	spa_config_enter(spa, SCL_STATE_ALL, vd, RW_READER);

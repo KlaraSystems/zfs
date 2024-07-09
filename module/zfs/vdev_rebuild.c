@@ -300,7 +300,8 @@ vdev_rebuild_initiate(vdev_t *vd, uint64_t txg)
 	ASSERT(MUTEX_HELD(&vd->vdev_rebuild_lock));
 	ASSERT(!vd->vdev_rebuilding);
 
-	dmu_tx_t *tx = dmu_tx_create_assigned(spa_get_dsl(spa), txg);
+	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 
 	vd->vdev_rebuilding = B_TRUE;
 
@@ -617,7 +618,7 @@ vdev_rebuild_range(vdev_rebuild_t *vr, uint64_t start, uint64_t size)
 	mutex_exit(&vr->vr_io_lock);
 
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND));
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 	uint64_t txg = dmu_tx_get_txg(tx);
 	vr->vr_last_txg = txg;
 
@@ -979,7 +980,7 @@ skip:
 	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
 
 	dmu_tx_t *tx = dmu_tx_create_dd(dp->dp_mos_dir);
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND));
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 
 	mutex_enter(&vd->vdev_rebuild_lock);
 	if (error == 0) {
