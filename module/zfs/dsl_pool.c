@@ -51,6 +51,8 @@
 #include <sys/dsl_userhold.h>
 #include <sys/trace_zfs.h>
 #include <sys/mmp.h>
+#include <sys/zvol.h>
+#include <sys/zfs_vfsops.h>
 
 /*
  * ZFS Write Throttle
@@ -1620,6 +1622,7 @@ dsl_pool_config_held_writer(dsl_pool_t *dp)
 	return (RRW_WRITE_HELD(&dp->dp_config_rwlock));
 }
 
+#ifdef _KERNEL
 static int
 dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
 {
@@ -1639,19 +1642,15 @@ dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
 		return (0);
 
 	mutex_enter(&os->os_user_ptr_lock);
-	void *top = dmu_objset_get_user(os);
+	void *state = dmu_objset_get_user(os);
 	mutex_exit(&os->os_user_ptr_lock);
 
 	switch (dmu_objset_type(os)) {
 	case DMU_OST_ZFS:
-		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: apply lockout to "
-		    "filesystem %llu zfsvfs %px",
-		    (u_longlong_t)dmu_objset_id(os), top);
+		zfsvfs_apply_lockout(state, dp->dp_lockout);
 		break;
 	case DMU_OST_ZVOL:
-		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: apply lockout to "
-		    "volume %llu zvol_state %px",
-		    (u_longlong_t)dmu_objset_id(os), top);
+		zvol_apply_lockout(state, dp->dp_lockout);
 		break;
 	default:
 		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: don't know how to "
@@ -1662,6 +1661,7 @@ dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
 
 	return (0);
 }
+#endif
 
 void
 dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
@@ -1673,9 +1673,10 @@ dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
 
 	dp->dp_lockout = lockout;
 
+#ifdef _KERNEL
 	/* propagate to dataset lockouts */
 	dmu_objset_find_dp(dp, dp->dp_root_dir_obj, dsl_pool_lockout_ds_cb,
-	    &lockout, DS_FIND_CHILDREN);
+	    NULL, DS_FIND_CHILDREN);
 
 	/* Wake up anyone stuck in txg_wait_sync_flags */
 	/* XXX move to txg.c, name it txg_poke() */
@@ -1683,6 +1684,7 @@ dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
 	mutex_enter(&tx->tx_sync_lock);
 	cv_broadcast(&tx->tx_sync_done_cv);
 	mutex_exit(&tx->tx_sync_lock);
+#endif
 
 	/* XXX probably dbgmsg */
 	cmn_err(CE_NOTE, "dsl_pool_lockout: set lockout state to %d", dp->dp_lockout);
