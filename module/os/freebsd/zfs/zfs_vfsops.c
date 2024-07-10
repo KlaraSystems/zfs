@@ -1223,7 +1223,24 @@ zfsvfs_setup(zfsvfs_t *zfsvfs, boolean_t mounting)
 	dmu_objset_set_user(zfsvfs->z_os, zfsvfs);
 	mutex_exit(&zfsvfs->z_os->os_user_ptr_lock);
 
+	zfsvfs_apply_lockout(zfsvfs, dmu_objset_pool(zfsvfs->z_os)->dp_lockout);
+
 	return (0);
+}
+
+void
+zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout)
+{
+	lockout_t old_lockout = zfsvfs->z_lockout;
+	if (old_lockout == lockout)
+		return;
+	zfsvfs->z_lockout = lockout;
+
+	/* XXX do lockout transition actions */
+
+	cmn_err(CE_NOTE,
+	    "zfsvfs_apply_lockout: %llu lockout changed from %d to %d",
+	    dmu_objset_id(zfsvfs->z_os), old_lockout, lockout);
 }
 
 void

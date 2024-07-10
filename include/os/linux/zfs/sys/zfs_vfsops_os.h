@@ -142,6 +142,7 @@ struct zfsvfs {
 	avl_tree_t	*z_hold_trees;	/* znode hold trees */
 	kmutex_t	*z_hold_locks;	/* znode hold locks */
 	taskqid_t	z_drain_task;	/* task id for the unlink drain task */
+	lockout_t	z_lockout;
 };
 
 #define	ZFS_TEARDOWN_INIT(zfsvfs)		\

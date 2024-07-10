@@ -62,6 +62,8 @@ extern void zfsvfs_update_fromname(const char *, const char *);
  *     alongside zfsvfs_enter() and such -- robn, 2024-07-09
  */
 #ifdef _KERNEL
+extern void zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout);
+
 static inline int
 zfsvfs_lockout_error(zfsvfs_t *zfsvfs)
 {

@@ -1164,6 +1164,9 @@ zvol_setup_zv(zvol_state_t *zv)
 		zvol_os_set_disk_ro(zv, 0);
 		zv->zv_flags &= ~ZVOL_RDONLY;
 	}
+
+	zvol_apply_lockout(zv, dmu_objset_pool(os)->dp_lockout);
+
 	return (0);
 }
 
@@ -1346,6 +1349,21 @@ zvol_last_close(zvol_state_t *zv)
 	zv->zv_objset = NULL;
 
 	spa_close(spa, zv);
+}
+
+void
+zvol_apply_lockout(zvol_state_t *zv, lockout_t lockout)
+{
+	lockout_t old_lockout = zv->zv_lockout;
+	if (old_lockout == lockout)
+		return;
+	zv->zv_lockout = lockout;
+
+	/* XXX do lockout transition actions */
+
+	cmn_err(CE_NOTE,
+	    "zv_apply_lockout: %llu lockout changed from %d to %d",
+	    dmu_objset_id(zv->zv_objset), old_lockout, lockout);
 }
 
 typedef struct minors_job {
