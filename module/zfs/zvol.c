@@ -1359,7 +1359,31 @@ zvol_apply_lockout(zvol_state_t *zv, lockout_t lockout)
 		return;
 	zv->zv_lockout = lockout;
 
-	/* XXX do lockout transition actions */
+	/* XXX probably take zv_lock */
+	/* XXX probably update zvol_set_ro to update the flag but not
+	 *     actually un-readonly the volume when in readonly lockout.
+	 *     this is sort of analogous to zfsvfs readonl_changed_cb, but
+	 *     also read the now-obsolete comment in freebsd
+	 *     zfsvfs_apply_lockout. the important thing is, if the prop
+	 *     changes while locked out, we to not actually effect the change,
+	 *     and then we need to reassess it at unlock
+	 *       -- robn, 2024-07-10
+	 */
+
+	/* do lockout transition actions */
+	switch (lockout) {
+	case LOCKOUT_NONE:
+		zvol_os_set_disk_ro(zv, !!(zv->zv_flags & ZVOL_RDONLY));
+		break;
+	case LOCKOUT_READONLY:
+		zvol_os_set_disk_ro(zv, 1);
+		break;
+	case LOCKOUT_SUSPEND:
+		/* XXX not written yet so who knows */
+		break;
+	default:
+		break;
+	}
 
 	cmn_err(CE_NOTE,
 	    "zv_apply_lockout: %llu lockout changed from %d to %d",
