@@ -1236,7 +1236,41 @@ zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout)
 		return;
 	zfsvfs->z_lockout = lockout;
 
-	/* XXX do lockout transition actions */
+	/* do lockout transition actions */
+	switch (lockout) {
+	case LOCKOUT_NONE:
+		/*
+		 * XXX I think this is wrong. Linux sets the "wanted" state in
+		 *     zfsvfs->z_vfs->vfs_readonly at mount and when the
+		 *     operator changes it. It changes the kernel readonly flag
+		 *     only in readonly_changed_cb. So there's always a record
+		 *     of the "wanted" option for us to revert to.
+		 *
+		 *     FreeBSD however seems to flip
+		 *     zfsvfs->z_vfs->vfs_flag & VFS_RDONLY in
+		 *     readonly_changed_cb as well as the kernel readonly flag,
+		 *     so we have no record of the "wanted" state to return to.
+		 *
+		 *     This should be easily testable by just playing with
+		 *     mount options and the readonly property on stock OpenZFS
+		 *     and comparing the two platforms. I'm not going to do
+		 *     that right now though, eye on the prize and all that.
+		 *       -- robn, 2024-07-10
+		 */
+		readonly_changed_cb(zfsvfs,
+		    zfsvfs->z_vfs->vfs_flag & VFS_RDONLY);
+		break;
+	case LOCKOUT_READONLY:
+		readonly_changed_cb(zfsvfs, B_TRUE);
+		break;
+	case LOCKOUT_SUSPEND:
+		/* XXX not written yet so who knows */
+		break;
+	default:
+		break;
+	}
+
+	/* XXX close open files? */
 
 	cmn_err(CE_NOTE,
 	    "zfsvfs_apply_lockout: %llu lockout changed from %d to %d",

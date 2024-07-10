@@ -832,7 +832,22 @@ zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout)
 		return;
 	zfsvfs->z_lockout = lockout;
 
-	/* XXX do lockout transition actions */
+	/* do lockout transition actions */
+	switch (lockout) {
+	case LOCKOUT_NONE:
+		readonly_changed_cb(zfsvfs, zfsvfs->z_vfs->vfs_readonly);
+		break;
+	case LOCKOUT_READONLY:
+		readonly_changed_cb(zfsvfs, B_TRUE);
+		break;
+	case LOCKOUT_SUSPEND:
+		/* XXX not written yet so who knows */
+		break;
+	default:
+		break;
+	}
+
+	/* XXX close open files? */
 
 	cmn_err(CE_NOTE,
 	    "zfsvfs_apply_lockout: %llu lockout changed from %d to %d",
