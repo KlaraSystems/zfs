@@ -1961,6 +1961,11 @@ typedef enum {
 #define	ZPOOL_WAIT_WAITED		"wait_waited"
 
 /*
+ * The following are names used when invoking ZFS_IOC_CLEAR.
+ */
+#define	ZPOOL_CLEAR_READONLY		"clear_readonly"
+
+/*
  * The following are names used when invoking ZFS_IOC_VDEV_GET_PROP.
  */
 #define	ZPOOL_VDEV_PROPS_GET_VDEV	"vdevprops_get_vdev"

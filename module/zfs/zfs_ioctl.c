@@ -6680,29 +6680,48 @@ zfs_ioc_clear(zfs_cmd_t *zc)
 	spa->spa_last_open_failed = 0;
 	spa_namespace_exit(FTAG);
 
+	boolean_t readonly = B_FALSE;
+
+	nvlist_t *nvopts = NULL;
+	if (zc->zc_nvlist_src != 0) {
+		error = get_nvlist(zc->zc_nvlist_src, zc->zc_nvlist_src_size,
+		    zc->zc_iflags, &nvopts);
+		if (error != 0 && error != ENOENT)
+			return (error);
+	}
+
 	if (zc->zc_cookie & ZPOOL_NO_REWIND) {
+		if (nvopts != NULL) {
+			boolean_t opt;
+			error = nvlist_lookup_boolean_value(nvopts,
+			    ZPOOL_CLEAR_READONLY, &opt);
+			if (error != 0 && error != ENOENT)
+				goto done_opts;
+			if (error == 0)
+				readonly = opt;
+		}
 		error = spa_open(zc->zc_name, &spa, FTAG);
 	} else {
-		nvlist_t *policy;
+		if (nvopts == NULL) {
+			error = SET_ERROR(EINVAL);
+			goto done_opts;
+		}
+
 		nvlist_t *config = NULL;
+		error = spa_open_rewind(zc->zc_name, &spa, FTAG,
+		    nvopts, &config);
+		if (config != NULL) {
+			int err;
 
-		if (zc->zc_nvlist_src == 0)
-			return (SET_ERROR(EINVAL));
-
-		if ((error = get_nvlist(zc->zc_nvlist_src,
-		    zc->zc_nvlist_src_size, zc->zc_iflags, &policy)) == 0) {
-			error = spa_open_rewind(zc->zc_name, &spa, FTAG,
-			    policy, &config);
-			if (config != NULL) {
-				int err;
-
-				if ((err = put_nvlist(zc, config)) != 0)
-					error = err;
-				nvlist_free(config);
-			}
-			nvlist_free(policy);
+			if ((err = put_nvlist(zc, config)) != 0)
+				error = err;
+			nvlist_free(config);
 		}
 	}
+
+done_opts:
+	if (nvopts != NULL)
+		nvlist_free(nvopts);
 
 	if (error != 0)
 		return (error);
@@ -6741,6 +6760,9 @@ zfs_ioc_clear(zfs_cmd_t *zc)
 	 */
 	if (zio_resume(spa) != 0)
 		error = SET_ERROR(EIO);
+
+	if (readonly)
+		dsl_pool_lockout(spa->spa_dsl_pool, LOCKOUT_READONLY);
 
 	spa_close(spa, FTAG);
 

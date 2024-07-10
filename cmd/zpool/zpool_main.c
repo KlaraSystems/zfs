@@ -8342,7 +8342,9 @@ zpool_do_clear(int argc, char **argv)
 	int c;
 	int ret = 0;
 	boolean_t is_power_on = B_FALSE;
-	nvlist_t *policy = NULL;
+	boolean_t readonly = B_FALSE;
+	uint32_t rewind_policy = ZPOOL_NO_REWIND;
+	nvlist_t *nvopts = NULL;
 	zpool_handle_t *zhp;
 	char *pool, *device;
 
@@ -8352,9 +8354,21 @@ zpool_do_clear(int argc, char **argv)
 	};
 
 	/* check options */
-	while ((c = getopt_long(argc, argv, "", long_options,
+	while ((c = getopt_long(argc, argv, "RFnX", long_options,
 	    NULL)) != -1) {
 		switch (c) {
+		case 'F':
+			do_rewind = B_TRUE;
+			break;
+		case 'n':
+			dryrun = B_TRUE;
+			break;
+		case 'X':
+			xtreme_rewind = B_TRUE;
+			break;
+		case 'R':
+			readonly = B_TRUE;
+			break;
 		case ZPOOL_OPTION_POWER:
 			is_power_on = B_TRUE;
 			break;
@@ -8381,14 +8395,36 @@ zpool_do_clear(int argc, char **argv)
 		usage(B_FALSE);
 	}
 
-	if (nvlist_alloc(&policy, NV_UNIQUE_NAME, 0) != 0)
+	if ((dryrun || xtreme_rewind) && !do_rewind) {
+		(void) fprintf(stderr,
+		    gettext("-n or -X only meaningful with -F\n"));
+		usage(B_FALSE);
+	}
+	if (dryrun)
+		rewind_policy = ZPOOL_TRY_REWIND;
+	else if (do_rewind)
+		rewind_policy = ZPOOL_DO_REWIND;
+	if (xtreme_rewind)
+		rewind_policy |= ZPOOL_EXTREME_REWIND;
+
+	/* In future, further rewind policy choices can be passed along here */
+	if (nvlist_alloc(&nvopts, NV_UNIQUE_NAME, 0) != 0)
+		return (1);
+	if (nvlist_add_uint32(nvopts, ZPOOL_LOAD_REWIND_POLICY,
+	    rewind_policy) != 0) {
+		nvlist_free(nvopts);
+		return (1);
+	}
+	if (nvlist_add_boolean_value(nvopts, ZPOOL_CLEAR_READONLY,
+	    readonly) != 0) {
+		nvlist_free(nvopts);
 		return (1);
 
 	pool = argv[0];
 	device = argc == 2 ? argv[1] : NULL;
 
 	if ((zhp = zpool_open_canfail(g_zfs, pool)) == NULL) {
-		nvlist_free(policy);
+		nvlist_free(nvopts);
 		return (1);
 	}
 
@@ -8400,12 +8436,12 @@ zpool_do_clear(int argc, char **argv)
 		}
 	}
 
-	if (zpool_clear(zhp, device, policy) != 0)
+	if (zpool_clear(zhp, device, nvopts) != 0)
 		ret = 1;
 
 	zpool_close(zhp);
 
-	nvlist_free(policy);
+	nvlist_free(nvopts);
 
 	return (ret);
 }
