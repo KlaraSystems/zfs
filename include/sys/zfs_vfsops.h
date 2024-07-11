@@ -62,7 +62,7 @@ extern void zfsvfs_update_fromname(const char *, const char *);
  *     alongside zfsvfs_enter() and such -- robn, 2024-07-09
  */
 #ifdef _KERNEL
-extern void zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout);
+extern void zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, uint64_t lockout);
 
 static inline int
 zfsvfs_lockout_error(zfsvfs_t *zfsvfs)
@@ -78,7 +78,7 @@ zfsvfs_lockout_error(zfsvfs_t *zfsvfs)
 	 *     LOCKOUT_READONLY). ideas already had, but maybe I didn't write
 	 *     them down before? -- robn, 2024-07-09
 	 */
-	switch (zfsvfs->z_os->os_spa->spa_dsl_pool->dp_lockout) {
+	switch (atomic_load_64(&zfsvfs->z_os->os_spa->spa_dsl_pool->dp_lockout)) {
 	case LOCKOUT_READONLY:
 		return (SET_ERROR(EROFS));
 	default:

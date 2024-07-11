@@ -56,7 +56,7 @@ extern int zvol_set_ro(const char *, boolean_t);
 extern int zvol_suspend(const char *, zvol_state_handle_t **);
 extern int zvol_resume(zvol_state_handle_t *);
 extern void *zvol_tag(zvol_state_handle_t *);
-extern void zvol_apply_lockout(zvol_state_handle_t *zv, lockout_t lockout);
+extern void zvol_apply_lockout(zvol_state_handle_t *zv, uint64_t lockout);
 
 extern int zvol_init(void);
 extern void zvol_fini(void);

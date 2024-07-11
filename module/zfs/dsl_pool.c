@@ -1622,20 +1622,13 @@ dsl_pool_config_held_writer(dsl_pool_t *dp)
 	return (RRW_WRITE_HELD(&dp->dp_config_rwlock));
 }
 
-#ifdef _KERNEL
 static int
 dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
 {
 	(void) dp;
-	(void) arg;
 
-	/*
-	 * XXX understand out locking through here. it's all in-memory,
-	 *     mostly just need to make sure things are not destroyed out
-	 *     from under us. good bet dmu_objset_find_dp already took
-	 *     a dataset lock for us? could be enough, but need to take
-	 *     care if we're want to push this out to workers
-	 *       -- robn, 2024-07-09 */
+#ifdef _KERNEL
+	uint64_t lockout = *(uint64_t *)arg;
 
 	objset_t *os = ds->ds_objset;
 	if (os == NULL)
@@ -1647,10 +1640,10 @@ dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
 
 	switch (dmu_objset_type(os)) {
 	case DMU_OST_ZFS:
-		zfsvfs_apply_lockout(state, dp->dp_lockout);
+		zfsvfs_apply_lockout(state, lockout);
 		break;
 	case DMU_OST_ZVOL:
-		zvol_apply_lockout(state, dp->dp_lockout);
+		zvol_apply_lockout(state, lockout);
 		break;
 	default:
 		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: don't know how to "
@@ -1658,25 +1651,24 @@ dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
 		    dmu_objset_type(os), (u_longlong_t)dmu_objset_id(os));
 		break;
 	}
+#else
+	(void) ds;
+	(void) arg;
+#endif
 
 	return (0);
 }
-#endif
 
-void
-dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
-{
+void dsl_pool_lockout(dsl_pool_t *dp, uint64_t lockout) {
 	/*
-	 * XXX what are the locking requirements here? probably just dp_lock?
-	 *       -- robn, 2024-06-28
+	 * set lockout on the pool as a whole (applied to new objsets)
 	 */
+	atomic_store_64(&dp->dp_lockout, lockout);
 
-	dp->dp_lockout = lockout;
-
-#ifdef _KERNEL
-	/* propagate to dataset lockouts */
+	/*
+	 * propagate to objset lockouts */
 	dmu_objset_find_dp(dp, dp->dp_root_dir_obj, dsl_pool_lockout_ds_cb,
-	    NULL, DS_FIND_CHILDREN);
+	    &lockout, DS_FIND_CHILDREN);
 
 	/* Wake up anyone stuck in txg_wait_sync_flags */
 	/* XXX move to txg.c, name it txg_poke() */
@@ -1684,10 +1676,10 @@ dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout)
 	mutex_enter(&tx->tx_sync_lock);
 	cv_broadcast(&tx->tx_sync_done_cv);
 	mutex_exit(&tx->tx_sync_lock);
-#endif
 
 	/* XXX probably dbgmsg */
-	cmn_err(CE_NOTE, "dsl_pool_lockout: set lockout state to %d", dp->dp_lockout);
+	cmn_err(CE_NOTE, "dsl_pool_lockout: set lockout state to %llu",
+	    (u_longlong_t)lockout);
 }
 
 EXPORT_SYMBOL(dsl_pool_config_enter);

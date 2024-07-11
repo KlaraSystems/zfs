@@ -35,7 +35,6 @@
 #include <sys/txg.h>
 #include <sys/zio.h>
 #include <sys/bplist.h>
-#include <sys/lockout.h>
 #include <sys/dsl_synctask.h>
 #include <sys/zfs_context.h>
 #include <sys/dsl_deadlist.h>
@@ -233,13 +232,6 @@ typedef struct dsl_dataset {
 	objset_t *ds_objset;
 	uint64_t ds_userrefs;
 	const void *ds_owner;
-
-	/* dataset lockout state */
-	/* XXX the path here from zfsvfs is long; consider a callback or cache
-	 *     option to keep it up to date to let zfs_enter etc stay quick
-	 *       -- robn, 2024-06-28
-	 */
-	lockout_t ds_lockout;
 
 	/*
 	 * Long holds prevent the ds from being destroyed; they allow the
@@ -529,8 +521,6 @@ void dsl_dataset_activate_redaction(dsl_dataset_t *ds, uint64_t *redact_snaps,
 
 int dsl_dataset_oldest_snapshot(spa_t *spa, uint64_t head_ds, uint64_t min_txg,
     uint64_t *oldest_dsobj);
-
-void dsl_dataset_lockout(dsl_dataset_t *ds, lockout_t lockout);
 
 #ifdef ZFS_DEBUG
 #define	dprintf_ds(ds, fmt, ...) do { \

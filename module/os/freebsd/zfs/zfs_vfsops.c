@@ -1223,18 +1223,18 @@ zfsvfs_setup(zfsvfs_t *zfsvfs, boolean_t mounting)
 	dmu_objset_set_user(zfsvfs->z_os, zfsvfs);
 	mutex_exit(&zfsvfs->z_os->os_user_ptr_lock);
 
-	zfsvfs_apply_lockout(zfsvfs, dmu_objset_pool(zfsvfs->z_os)->dp_lockout);
+	zfsvfs_apply_lockout(zfsvfs,
+	    atomic_load_64(&(dmu_objset_pool(zfsvfs->z_os)->dp_lockout)));
 
 	return (0);
 }
 
 void
-zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout)
+zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, uint64_t lockout)
 {
-	lockout_t old_lockout = zfsvfs->z_lockout;
+	uint64_t old_lockout = atomic_swap_64(&zfsvfs->z_lockout, lockout);
 	if (old_lockout == lockout)
 		return;
-	zfsvfs->z_lockout = lockout;
 
 	/* do lockout transition actions */
 	switch (lockout) {
@@ -1273,8 +1273,9 @@ zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout)
 	/* XXX close open files? */
 
 	cmn_err(CE_NOTE,
-	    "zfsvfs_apply_lockout: %llu lockout changed from %d to %d",
-	    (unsigned long long)dmu_objset_id(zfsvfs->z_os), old_lockout, lockout);
+	    "zfsvfs_apply_lockout: %llu lockout changed from %llu to %llu",
+	    dmu_objset_id(zfsvfs->z_os),
+	    (uint64_t)old_lockout, (uint64_t)lockout);
 }
 
 void

@@ -33,6 +33,7 @@
 #include <sys/dmu_tx.h>
 #include <sys/dsl_pool.h>
 #include <sys/dsl_scan.h>
+#include <sys/lockout.h>
 #include <sys/zil.h>
 #include <sys/callb.h>
 #include <sys/trace_zfs.h>
@@ -749,7 +750,7 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, txg_wait_flag_t flags)
 		 * don't care, they can call back in.
 		 */
 		if ((flags & TXG_WAIT_LOCKOUT) &&
-		    dp->dp_lockout != LOCKOUT_NONE) {
+		    atomic_load_64(&dp->dp_lockout) != LOCKOUT_NONE) {
 			error = SET_ERROR(EAGAIN);
 			break;
 		}

@@ -39,7 +39,6 @@
 #include <sys/arc.h>
 #include <sys/bpobj.h>
 #include <sys/bptree.h>
-#include <sys/lockout.h>
 #include <sys/rrwlock.h>
 #include <sys/dsl_synctask.h>
 #include <sys/mmp.h>
@@ -132,7 +131,7 @@ typedef struct dsl_pool {
 	wmsum_t dp_mos_uncompressed_delta;
 
 	/* pool-wide lockout state */
-	lockout_t dp_lockout;
+	uint64_t dp_lockout;
 
 	/*
 	 * Time of most recently scheduled (furthest in the future)
@@ -213,7 +212,7 @@ void dsl_pool_rele(dsl_pool_t *dp, const void *tag);
 int dsl_pool_create_obsolete_bpobj(dsl_pool_t *dp, dmu_tx_t *tx);
 void dsl_pool_destroy_obsolete_bpobj(dsl_pool_t *dp, dmu_tx_t *tx);
 
-void dsl_pool_lockout(dsl_pool_t *dp, lockout_t lockout);
+void dsl_pool_lockout(dsl_pool_t *dp, uint64_t lockout);
 
 #ifdef	__cplusplus
 }

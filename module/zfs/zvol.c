@@ -88,6 +88,7 @@
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_prop.h>
 #include <sys/dsl_dir.h>
+#include <sys/lockout.h>
 #include <sys/zap.h>
 #include <sys/zfeature.h>
 #include <sys/zil_impl.h>
@@ -1165,7 +1166,8 @@ zvol_setup_zv(zvol_state_t *zv)
 		zv->zv_flags &= ~ZVOL_RDONLY;
 	}
 
-	zvol_apply_lockout(zv, dmu_objset_pool(os)->dp_lockout);
+	zvol_apply_lockout(zv,
+	    atomic_load_64(&(dmu_objset_pool(os)->dp_lockout)));
 
 	return (0);
 }
@@ -1352,12 +1354,11 @@ zvol_last_close(zvol_state_t *zv)
 }
 
 void
-zvol_apply_lockout(zvol_state_t *zv, lockout_t lockout)
+zvol_apply_lockout(zvol_state_t *zv, uint64_t lockout)
 {
-	lockout_t old_lockout = zv->zv_lockout;
+	uint64_t old_lockout = atomic_swap_64(&zv->zv_lockout, lockout);
 	if (old_lockout == lockout)
 		return;
-	zv->zv_lockout = lockout;
 
 	/* XXX probably take zv_lock */
 	/* XXX probably update zvol_set_ro to update the flag but not
@@ -1386,8 +1387,9 @@ zvol_apply_lockout(zvol_state_t *zv, lockout_t lockout)
 	}
 
 	cmn_err(CE_NOTE,
-	    "zv_apply_lockout: %llu lockout changed from %d to %d",
-	    (unsigned long long)dmu_objset_id(zv->zv_objset), old_lockout, lockout);
+	    "zv_apply_lockout: %llu lockout changed from %llu to %llu",
+	    dmu_objset_id(zv->zv_objset),
+	    (uint64_t)old_lockout, (uint64_t)lockout);
 }
 
 typedef struct minors_job {

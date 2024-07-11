@@ -1091,7 +1091,8 @@ dmu_tx_try_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	 * XXX this is actually checking pool lockout; change to dataset
 	 *     once the lockout is propagated to datasets.
 	 */
-	if (!(flags & DMU_TX_NOLOCKOUT) && tx->tx_pool->dp_lockout) {
+	if (!(flags & DMU_TX_NOLOCKOUT) &&
+	    atomic_load_64(&tx->tx_pool->dp_lockout)) {
 		DMU_TX_STAT_BUMP(dmu_tx_lockout);
 		return (SET_ERROR(EAGAIN));
 	}
