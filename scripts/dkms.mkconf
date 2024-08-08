@@ -32,6 +32,7 @@ if [ -f \$kernel_source_dir/.config ]; then
     fi
 fi
 PRE_BUILD="configure
+  --disable-dependency-tracking
   --prefix=/usr
   --with-config=kernel
   --with-linux=\$(
