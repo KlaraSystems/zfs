@@ -8608,13 +8608,13 @@ ztest_init(ztest_shared_t *zs)
 		 */
 		if (i == SPA_FEATURE_LOG_SPACEMAP && ztest_random(4) == 0)
 			continue;
-#if 0
+
 		/*
-		 * split bewtween legacy and fast dedup
+		 * split 50/50 between legacy and fast dedup
 		 */
 		if (i == SPA_FEATURE_FAST_DEDUP && ztest_random(2) != 0)
 			continue;
-#endif
+
 		VERIFY3S(-1, !=, asprintf(&buf, "feature@%s",
 		    spa_feature_table[i].fi_uname));
 		fnvlist_add_uint64(props, buf, 0);

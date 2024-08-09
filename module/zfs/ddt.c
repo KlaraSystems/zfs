@@ -291,7 +291,6 @@ static const uint64_t ddt_version_flags[] = {
 /* Dummy version to signal that configure is still necessary */
 #define	DDT_VERSION_UNCONFIGURED	(UINT64_MAX)
 
-#ifdef _KERNEL
 /* per-DDT kstats */
 typedef struct {
 	/* total lookups and whether they returned new or existing entries */
@@ -355,13 +354,6 @@ static const ddt_kstats_t ddt_kstats_template = {
 #define	DDT_KSTAT_SET(ddt, stat, val) \
 	do { atomic_store_64(_DDT_KSTAT_STAT(ddt, stat), val); } while (0)
 #define	DDT_KSTAT_ZERO(ddt, stat) DDT_KSTAT_SET(ddt, stat, 0)
-#else
-#define	DDT_KSTAT_BUMP(ddt, stat) do {} while (0)
-#define	DDT_KSTAT_ADD(ddt, stat, val) do {} while (0)
-#define	DDT_KSTAT_SUB(ddt, stat, val) do {} while (0)
-#define	DDT_KSTAT_SET(ddt, stat, val) do {} while (0)
-#define	DDT_KSTAT_ZERO(ddt, stat) do {} while (0)
-#endif /* _KERNEL */
 
 static void
 ddt_object_create(ddt_t *ddt, ddt_type_t type, ddt_class_t class,
@@ -1545,7 +1537,6 @@ not_found:
 static void
 ddt_table_alloc_kstats(ddt_t *ddt)
 {
-#ifdef _KERNEL
 	char *mod = kmem_asprintf("zfs/%s", spa_name(ddt->ddt_spa));
 	char *name = kmem_asprintf("ddt_stats_%s",
 	    zio_checksum_table[ddt->ddt_checksum].ci_name);
@@ -1561,9 +1552,6 @@ ddt_table_alloc_kstats(ddt_t *ddt)
 
 	kmem_strfree(name);
 	kmem_strfree(mod);
-#else
-	(void) ddt;
-#endif /* _KERNEL */
 }
 
 static ddt_t *
@@ -1593,13 +1581,11 @@ ddt_table_alloc(spa_t *spa, enum zio_checksum c)
 static void
 ddt_table_free(ddt_t *ddt)
 {
-#ifdef _KERNEL
 	if (ddt->ddt_ksp != NULL) {
 		kmem_free(ddt->ddt_ksp->ks_data, sizeof (ddt_kstats_t));
 		ddt->ddt_ksp->ks_data = NULL;
 		kstat_delete(ddt->ddt_ksp);
 	}
-#endif /* _KERNEL */
 
 	ddt_log_free(ddt);
 	ASSERT0(avl_numnodes(&ddt->ddt_tree));

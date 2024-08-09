@@ -5618,7 +5618,7 @@ zpool_set_vdev_prop(zpool_handle_t *zhp, const char *vdevname,
 }
 
 /*
- *
+ * Prune older entries from the DDT to reclaim space under the quota
  */
 int
 zpool_ddt_prune(zpool_handle_t *zhp, zpool_ddt_prune_unit_t unit,
