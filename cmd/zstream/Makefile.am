@@ -2,7 +2,7 @@ include $(top_srcdir)/config/Rules.am
 
 sbin_PROGRAMS = zstream
 
-zstream_CPPFLAGS = $(AM_CPPFLAGS) $(FORCEDEBUG_CPPFLAGS)
+AM_CPPFLAGS += $(LIBZPOOL_CPPFLAGS)
 
 zstream_SOURCES = \
 	zstream.c \

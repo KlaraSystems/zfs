@@ -62,3 +62,9 @@ AM_LDFLAGS += -fstack-protector-strong -shared
 AM_LDFLAGS += -Wl,-x -Wl,--fatal-warnings -Wl,--warn-shared-textrel
 AM_LDFLAGS += -lm
 endif
+
+# Forcibly enable asserts/debugging for libzpool &al.
+# Since ZFS_DEBUG can change shared data structures, all libzpool users must
+# be compiled with the same flags.
+# See https://github.com/openzfs/zfs/issues/16476
+LIBZPOOL_CPPFLAGS = -DDEBUG -UNDEBUG -DZFS_DEBUG
