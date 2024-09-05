@@ -22,9 +22,9 @@
 #if defined(__arm__)
 
 #ifndef __ARM_ARCH
-#define	__ARM_ARCH__      7
+# define __ARM_ARCH__	7
 #else
-#define __ARM_ARCH__      __ARM_ARCH
+# define __ARM_ARCH__	__ARM_ARCH
 #endif
 
 #if defined(__thumb2__)
