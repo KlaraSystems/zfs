@@ -200,10 +200,12 @@ extern size_t fmd_buf_size(fmd_hdl_t *, fmd_case_t *, const char *);
 extern void fmd_serd_create(fmd_hdl_t *, const char *, uint_t, hrtime_t);
 extern void fmd_serd_destroy(fmd_hdl_t *, const char *);
 extern int fmd_serd_exists(fmd_hdl_t *, const char *);
+extern int fmd_serd_active(fmd_hdl_t *, const char *);
 extern void fmd_serd_reset(fmd_hdl_t *, const char *);
 extern int fmd_serd_record(fmd_hdl_t *, const char *, fmd_event_t *);
 extern int fmd_serd_fired(fmd_hdl_t *, const char *);
 extern int fmd_serd_empty(fmd_hdl_t *, const char *);
+extern void fmd_serd_gc(fmd_hdl_t *);
 
 extern id_t fmd_timer_install(fmd_hdl_t *, void *, fmd_event_t *, hrtime_t);
 extern void fmd_timer_remove(fmd_hdl_t *, id_t);

@@ -519,6 +519,19 @@ fmd_serd_exists(fmd_hdl_t *hdl, const char *name)
 	return (fmd_serd_eng_lookup(&mp->mod_serds, name) != NULL);
 }
 
+int
+fmd_serd_active(fmd_hdl_t *hdl, const char *name)
+{
+	fmd_module_t *mp = (fmd_module_t *)hdl;
+	fmd_serd_eng_t *sgp;
+
+	if ((sgp = fmd_serd_eng_lookup(&mp->mod_serds, name)) == NULL) {
+		zed_log_msg(LOG_ERR, "serd engine '%s' does not exist", name);
+		return (0);
+	}
+	return (fmd_serd_eng_fired(sgp) || !fmd_serd_eng_empty(sgp));
+}
+
 void
 fmd_serd_reset(fmd_hdl_t *hdl, const char *name)
 {
@@ -550,6 +563,14 @@ fmd_serd_record(fmd_hdl_t *hdl, const char *name, fmd_event_t *ep)
 	err = fmd_serd_eng_record(sgp, ep->ev_hrt);
 
 	return (err);
+}
+
+void
+fmd_serd_gc(fmd_hdl_t *hdl)
+{
+	fmd_module_t *mp = (fmd_module_t *)hdl;
+
+	fmd_serd_hash_apply(&mp->mod_serds, fmd_serd_eng_gc, NULL);
 }
 
 /* FMD Timers */
