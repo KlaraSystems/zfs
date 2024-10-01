@@ -12,6 +12,7 @@ dist_pkgdata_SCRIPTS = \
 	auto_spare_multiple.ksh \
 	auto_spare_shared.ksh \
 	decrypt_fault.ksh \
+	fault_limits.ksh \
 	decompress_fault.ksh \
 	scrub_after_resilver.ksh \
 	zpool_status_-s.ksh
