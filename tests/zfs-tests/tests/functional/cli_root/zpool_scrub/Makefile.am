@@ -11,6 +11,7 @@ dist_pkgdata_SCRIPTS = \
 	zpool_scrub_offline_device.ksh \
 	zpool_scrub_print_repairing.ksh \
 	zpool_scrub_multiple_copies.ksh \
+	zpool_scrub_txg_continue_from_last.ksh \
 	zpool_error_scrub_001_pos.ksh \
 	zpool_error_scrub_002_pos.ksh \
 	zpool_error_scrub_003_pos.ksh \
