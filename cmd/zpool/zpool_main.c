@@ -8485,6 +8485,18 @@ zpool_do_scrub(int argc, char **argv)
 		(void) fprintf(stderr, gettext("invalid option "
 		    "combination: -e and -C are mutually exclusive\n"));
 		usage(B_FALSE);
+	} else if (is_pause && is_txg_continue) {
+		(void) fprintf(stderr, gettext("invalid option "
+		    "combination :-p and -C are mutually exclusive\n"));
+		usage(B_FALSE);
+	} else if (is_stop && is_txg_continue) {
+		(void) fprintf(stderr, gettext("invalid option "
+		    "combination :-s and -C are mutually exclusive\n"));
+		usage(B_FALSE);
+	} else if (is_error_scrub && is_txg_continue) {
+		(void) fprintf(stderr, gettext("invalid option "
+		    "combination :-e and -C are mutually exclusive\n"));
+		usage(B_FALSE);
 	} else {
 		if (is_error_scrub)
 			cb.cb_type = POOL_SCAN_ERRORSCRUB;
