@@ -72,8 +72,9 @@ AC_DEFUN([ZFS_AC_META], [
 		fi
 
 		if test -n "${_dpkg_parsechangelog}"; then
-			_dpkg_version=$(echo "${_dpkg_parsechangelog}" \
-				| $AWK '$[]1 == "Version:" { print $[]2; }' | cut -d- -f1)
+			_dpkg_full_version=$(echo "${_dpkg_parsechangelog}" \
+				| $AWK '$[]1 == "Version:" { print $[]2; }')
+			_dpkg_version=${_dpkg_full_version%-*}
 			if test "${_dpkg_version}" != "$ZFS_META_VERSION"; then
 				AC_MSG_ERROR([
 	*** Version $ZFS_META_VERSION in the META file is different than
@@ -86,9 +87,9 @@ AC_DEFUN([ZFS_AC_META], [
 		ZFS_META_RELEASE=_ZFS_AC_META_GETVAL([Release]);
 
 		if test -n "${_dpkg_parsechangelog}"; then
-			_dpkg_release=$(echo "${_dpkg_parsechangelog}" \
-				| $AWK '$[]1 == "Version:" { print $[]2; }' \
-				| cut -d- -f2-)
+			_dpkg_full_version=$(echo "${_dpkg_parsechangelog}" \
+				| $AWK '$[]1 == "Version:" { print $[]2; }')
+			_dpkg_release=${_dpkg_full_version##*-}
 			if test -n "${_dpkg_release}"; then
 				ZFS_META_RELEASE=${_dpkg_release}
 				_zfs_ac_meta_type="dpkg-parsechangelog"

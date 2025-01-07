@@ -10,7 +10,7 @@ After=systemd-remount-fs.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/sbin/modprobe zfs
+ExecStart=/usr/sbin/modprobe zfs
 
 [Install]
 WantedBy=zfs-mount.service
