@@ -9204,7 +9204,7 @@ l2arc_evict(l2arc_dev_t *dev, uint64_t distance, boolean_t all)
 	 * We need to add in the worst case scenario of log block overhead.
 	 */
 	distance += l2arc_log_blk_overhead(distance, dev);
-	if (vd->vdev_has_trim && l2arc_trim_ahead > 0) {
+	if (vd != NULL && vd->vdev_has_trim && l2arc_trim_ahead > 0) {
 		/*
 		 * Trim ahead of the write size 64MB or (l2arc_trim_ahead/100)
 		 * times the write size, whichever is greater.
