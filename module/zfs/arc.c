@@ -8892,7 +8892,7 @@ l2arc_sublist_lock(int list_num)
 static inline uint64_t
 l2arc_log_blk_overhead(uint64_t write_sz, l2arc_dev_t *dev)
 {
-	if (dev->l2ad_log_entries == 0) {
+	if (dev->l2ad_log_entries == 0 || l2arc_dev_invalid(dev)) {
 		return (0);
 	} else {
 		ASSERT(dev->l2ad_vdev != NULL);
