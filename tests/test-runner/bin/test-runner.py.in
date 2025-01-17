@@ -278,7 +278,14 @@ User: %s
             fail('%s' % e)
 
         self.result.starttime = monotonic_time()
-        proc = Popen(privcmd, stdout=PIPE, stderr=PIPE)
+        # Make sure that the new process creates a new process group. This is
+        # necesary for kill_cmd() to work correctly as sudo does not propagate
+        # signals sent from its own process group.
+        # Ideally, we would use process_group=0 here but it was introduced only
+        # in Python 3.11. To keep the code compatible with Python 3.8 for now,
+        # let's use start_new_session, which creates a new session. This is a
+        # bit more than we need but it does not hurt.
+        proc = Popen(privcmd, stdout=PIPE, stderr=PIPE, start_new_session=True)
         # Allow a special timeout value of 0 to mean infinity
         if int(self.timeout) == 0:
             self.timeout = sys.maxsize
