@@ -798,6 +798,12 @@ zpool_feature_init(void)
 		    slack_deps, sfeatures);
 	}
 
+	zfeature_register(SPA_FEATURE_DYNAMIC_GANG_HEADER,
+	    "com.klarasystems:dynamic_gang_header", "dynamic_gang_header",
+	    "Support for dynamically sized gang headers",
+	    ZFEATURE_FLAG_MOS | ZFEATURE_FLAG_NO_UPGRADE,
+	    ZFEATURE_TYPE_BOOLEAN, NULL, sfeatures);
+
 	zfs_mod_list_supported_free(sfeatures);
 }
 
