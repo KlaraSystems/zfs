@@ -475,7 +475,7 @@ static taskq_t *arc_flush_taskq;
  * 1  (disabled) one thread - parallel eviction is disabled.
  * 2+ (manual) set the number manually, limited by zfs_arc_evict_threads_max.
  */
-static uint_t zfs_arc_evict_threads = 0;
+static uint_t zfs_arc_evict_threads = 1;
 
 /*
  * The number of allocated ARC eviction threads. This limits the maximum value
