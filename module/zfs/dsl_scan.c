@@ -1670,7 +1670,7 @@ dsl_scan_check_suspend(dsl_scan_t *scn, const zbookmark_phys_t *zb)
 	if ((NSEC2MSEC(scan_time_ns) > mintime &&
 	    (scn->scn_dp->dp_dirty_total >= dirty_min_bytes ||
 	    txg_sync_waiting(scn->scn_dp) ||
-	    NSEC2SEC(sync_time_ns) >= zfs_txg_timeout)) ||
+	    NSEC2MSEC(sync_time_ns) >= zfs_txg_timeout)) ||
 	    spa_shutting_down(scn->scn_dp->dp_spa) ||
 	    (zfs_scan_strict_mem_lim && dsl_scan_should_clear(scn)) ||
 	    !ddt_walk_ready(scn->scn_dp->dp_spa)) {
@@ -1728,7 +1728,7 @@ dsl_error_scrub_check_suspend(dsl_scan_t *scn, const zbookmark_phys_t *zb)
 
 	if ((NSEC2MSEC(error_scrub_time_ns) > mintime &&
 	    (txg_sync_waiting(scn->scn_dp) ||
-	    NSEC2SEC(sync_time_ns) >= zfs_txg_timeout)) ||
+	    NSEC2MSEC(sync_time_ns) >= zfs_txg_timeout)) ||
 	    spa_shutting_down(scn->scn_dp->dp_spa)) {
 		if (zb) {
 			dprintf("error scrub suspending at bookmark "
@@ -3239,7 +3239,7 @@ scan_io_queue_check_suspend(dsl_scan_t *scn)
 	return ((NSEC2MSEC(scan_time_ns) > mintime &&
 	    (scn->scn_dp->dp_dirty_total >= dirty_min_bytes ||
 	    txg_sync_waiting(scn->scn_dp) ||
-	    NSEC2SEC(sync_time_ns) >= zfs_txg_timeout)) ||
+	    NSEC2MSEC(sync_time_ns) >= zfs_txg_timeout)) ||
 	    spa_shutting_down(scn->scn_dp->dp_spa));
 }
 
@@ -3585,7 +3585,7 @@ dsl_scan_async_block_should_pause(dsl_scan_t *scn)
 	}
 
 	elapsed_nanosecs = gethrtime() - scn->scn_sync_start_time;
-	return (elapsed_nanosecs / NANOSEC > zfs_txg_timeout ||
+	return (NSEC2MSEC(elapsed_nanosecs) > zfs_txg_timeout ||
 	    (NSEC2MSEC(elapsed_nanosecs) > scn->scn_async_block_min_time_ms &&
 	    txg_sync_waiting(scn->scn_dp)) ||
 	    spa_shutting_down(scn->scn_dp->dp_spa));

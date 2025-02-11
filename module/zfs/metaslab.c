@@ -337,6 +337,10 @@ static int zfs_metaslab_try_hard_before_gang = B_FALSE;
  */
 static uint_t zfs_metaslab_find_max_tries = 100;
 
+static uint_t zfs_metaslab_passivate_txgs = UINT_MAX;
+
+static uint_t zfs_metaslab_spacing_candidates = 8;
+
 static uint64_t metaslab_weight(metaslab_t *, boolean_t);
 static void metaslab_set_fragmentation(metaslab_t *, boolean_t);
 static void metaslab_free_impl(vdev_t *, uint64_t, uint64_t, boolean_t);
@@ -716,6 +720,22 @@ metaslab_compare(const void *x1, const void *x2)
 	int cmp = TREE_CMP(m2->ms_weight, m1->ms_weight);
 	if (likely(cmp))
 		return (cmp);
+
+	if (zfs_metaslab_spacing_candidates > 0) {
+		metaslab_group_t *mg = NULL;
+		if (m1->ms_group)
+			mg = m1->ms_group;
+		else
+			mg = m2->ms_group;
+
+		uint64_t vd_region_size = mg->mg_vd->vdev_asize /
+		    mg->mg_allocators;
+
+		cmp = TREE_CMP(m1->ms_start % vd_region_size,
+		    m2->ms_start % vd_region_size);
+		if (likely(cmp))
+			return (cmp);
+	}
 
 	IMPLY(TREE_CMP(m1->ms_start, m2->ms_start) == 0, m1 == m2);
 
@@ -3347,7 +3367,7 @@ metaslab_recalculate_weight_and_sort(metaslab_t *msp)
 
 static int
 metaslab_activate_allocator(metaslab_group_t *mg, metaslab_t *msp,
-    int allocator, uint64_t activation_weight)
+    int allocator, uint64_t activation_weight, uint64_t txg)
 {
 	metaslab_group_allocator_t *mga = &mg->mg_allocator[allocator];
 	ASSERT(MUTEX_HELD(&msp->ms_lock));
@@ -3359,6 +3379,7 @@ metaslab_activate_allocator(metaslab_group_t *mg, metaslab_t *msp,
 	if (activation_weight == METASLAB_WEIGHT_CLAIM) {
 		ASSERT0(msp->ms_activation_weight);
 		msp->ms_activation_weight = msp->ms_weight;
+		msp->ms_activation_txg = txg;
 		metaslab_group_sort(mg, msp, msp->ms_weight |
 		    activation_weight);
 		return (0);
@@ -3383,14 +3404,17 @@ metaslab_activate_allocator(metaslab_group_t *mg, metaslab_t *msp,
 	metaslab_group_sort_impl(mg, msp,
 	    msp->ms_weight | activation_weight);
 	mutex_exit(&mg->mg_lock);
+	msp->ms_activation_txg = txg;
 
 	return (0);
 }
 
 static int
-metaslab_activate(metaslab_t *msp, int allocator, uint64_t activation_weight)
+metaslab_activate(metaslab_t *msp, int allocator, uint64_t activation_weight,
+    uint64_t txg)
 {
 	ASSERT(MUTEX_HELD(&msp->ms_lock));
+	IMPLY(!(activation_weight & METASLAB_WEIGHT_CLAIM), txg != 0);
 
 	/*
 	 * The current metaslab is already activated for us so there
@@ -3454,7 +3478,7 @@ metaslab_activate(metaslab_t *msp, int allocator, uint64_t activation_weight)
 	}
 
 	if ((error = metaslab_activate_allocator(msp->ms_group, msp,
-	    allocator, activation_weight)) != 0) {
+	    allocator, activation_weight, txg)) != 0) {
 		return (error);
 	}
 
@@ -3513,6 +3537,7 @@ metaslab_passivate(metaslab_t *msp, uint64_t weight)
 
 	ASSERT(msp->ms_activation_weight != 0);
 	msp->ms_activation_weight = 0;
+	msp->ms_activation_txg = 0;
 	metaslab_passivate_allocator(msp->ms_group, msp, weight);
 	ASSERT0(msp->ms_weight & METASLAB_ACTIVE_MASK);
 }
@@ -4699,6 +4724,15 @@ metaslab_block_alloc(metaslab_t *msp, uint64_t size, uint64_t txg)
 	return (start);
 }
 
+static boolean_t
+metaslab_fits_region(metaslab_t *msp, int allocator)
+{
+	uint64_t vd_region_size = msp->ms_group->mg_vd->vdev_asize /
+	    msp->ms_group->mg_allocators;
+
+	return ((msp->ms_start / vd_region_size) == allocator);
+}
+
 /*
  * Find the metaslab with the highest weight that is less than what we've
  * already tried.  In the common case, this means that we will examine each
@@ -4718,11 +4752,11 @@ find_valid_metaslab(metaslab_group_t *mg, uint64_t activation_weight,
 {
 	avl_index_t idx;
 	avl_tree_t *t = &mg->mg_metaslab_tree;
-	metaslab_t *msp = avl_find(t, search, &idx);
+	metaslab_t *msp = avl_find(t, search, &idx), *candidate = NULL;
 	if (msp == NULL)
 		msp = avl_nearest(t, idx, AVL_AFTER);
 
-	uint_t tries = 0;
+	uint_t tries = 0, candidates = 0;
 	for (; msp != NULL; msp = AVL_NEXT(t, msp)) {
 		int i;
 
@@ -4753,16 +4787,27 @@ find_valid_metaslab(metaslab_group_t *mg, uint64_t activation_weight,
 		 * we're getting desperate enough to steal another allocator's
 		 * metaslab, so we still don't care about distances.
 		 */
-		if (activation_weight == METASLAB_WEIGHT_PRIMARY || *was_active)
+		if (activation_weight != METASLAB_WEIGHT_PRIMARY &&
+		    !*was_active) {
+			for (i = 0; i < d; i++) {
+				if (want_unique &&
+				    !metaslab_is_unique(msp, &dva[i]))
+					break;  /* try another metaslab */
+			}
+			if (i != d)
+				continue;
+		}
+
+		if (zfs_metaslab_spacing_candidates <= 1 ||
+		    metaslab_fits_region(msp, allocator))
 			break;
 
-		for (i = 0; i < d; i++) {
-			if (want_unique &&
-			    !metaslab_is_unique(msp, &dva[i]))
-				break;  /* try another metaslab */
-		}
-		if (i == d)
+		if (candidate == NULL)
+			candidate = msp;
+		if (candidates++ > zfs_metaslab_spacing_candidates) {
+			msp = candidate;
 			break;
+		}
 	}
 
 	if (msp != NULL) {
@@ -4851,6 +4896,7 @@ metaslab_group_alloc_normal(metaslab_group_t *mg, zio_alloc_list_t *zal,
 	 */
 	search->ms_allocator = -1;
 	search->ms_primary = B_TRUE;
+	search->ms_group = NULL;
 	for (;;) {
 		boolean_t was_active = B_FALSE;
 
@@ -4962,7 +5008,7 @@ metaslab_group_alloc_normal(metaslab_group_t *mg, zio_alloc_list_t *zal,
 		metaslab_set_selected_txg(msp, txg);
 
 		int activation_error =
-		    metaslab_activate(msp, allocator, activation_weight);
+		    metaslab_activate(msp, allocator, activation_weight, txg);
 		metaslab_active_mask_verify(msp);
 
 		/*
@@ -5033,7 +5079,12 @@ metaslab_group_alloc_normal(metaslab_group_t *mg, zio_alloc_list_t *zal,
 		offset = metaslab_block_alloc(msp, asize, txg);
 		metaslab_trace_add(zal, mg, msp, asize, d, offset, allocator);
 
-		if (offset != -1ULL) {
+		if (offset != -1 && activated && msp->ms_activation_txg + zfs_metaslab_passivate_txgs <=
+		    txg) {
+			uint64_t weight = metaslab_weight(msp, B_TRUE);
+			metaslab_passivate(msp, weight & ~METASLAB_ACTIVE_MASK);
+			break;
+		} else if (offset != -1ULL) {
 			/* Proactively passivate the metaslab, if needed */
 			if (activated)
 				metaslab_segment_may_passivate(msp);
@@ -5734,7 +5785,7 @@ metaslab_claim_concrete(vdev_t *vd, uint64_t offset, uint64_t size,
 	mutex_enter(&msp->ms_lock);
 
 	if ((txg != 0 && spa_writeable(spa)) || !msp->ms_loaded) {
-		error = metaslab_activate(msp, 0, METASLAB_WEIGHT_CLAIM);
+		error = metaslab_activate(msp, 0, METASLAB_WEIGHT_CLAIM, txg);
 		if (error == EBUSY) {
 			ASSERT(msp->ms_loaded);
 			ASSERT(msp->ms_weight & METASLAB_ACTIVE_MASK);
@@ -6291,6 +6342,12 @@ ZFS_MODULE_PARAM(zfs_metaslab, zfs_metaslab_, try_hard_before_gang, INT,
 
 ZFS_MODULE_PARAM(zfs_metaslab, zfs_metaslab_, find_max_tries, UINT, ZMOD_RW,
 	"Normally only consider this many of the best metaslabs in each vdev");
+
+ZFS_MODULE_PARAM(zfs_metaslab, zfs_metaslab_, passivate_txgs, UINT, ZMOD_RW,
+	"Automatically passivate each metaslab after this many TXGs");
+
+ZFS_MODULE_PARAM(zfs_metaslab, zfs_metaslab_, spacing_candidates, UINT, ZMOD_RD,
+	"Number of metaslabs to check for the right vdev region");
 
 ZFS_MODULE_PARAM_CALL(zfs, zfs_, active_allocator,
 	param_set_active_allocator, param_get_charp, ZMOD_RW,

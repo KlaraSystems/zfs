@@ -159,7 +159,7 @@ increase_device_sizes $(( FILE_SIZE * 4 ))
 
 # We set zfs_txg_timeout to 1 to reduce resilvering time at each sync.
 ZFS_TXG_TIMEOUT=$(get_zfs_txg_timeout)
-set_zfs_txg_timeout 1
+set_zfs_txg_timeout 1000
 
 test_replace_vdev "$VDEV0 $VDEV1" \
     "$VDEV1" "$VDEV2" \

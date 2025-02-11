@@ -2046,7 +2046,7 @@ ddt_sync_flush_log_incremental(ddt_t *ddt, dmu_tx_t *tx)
 
 	uint64_t target_time = txg_sync_waiting(ddt->ddt_spa->spa_dsl_pool) ?
 	    MIN(MSEC2NSEC(zfs_dedup_log_flush_min_time_ms),
-	    SEC2NSEC(zfs_txg_timeout)) : SEC2NSEC(zfs_txg_timeout);
+	    MSEC2NSEC(zfs_txg_timeout)) : MSEC2NSEC(zfs_txg_timeout);
 
 	uint64_t elapsed_time = gethrtime() - ddt->ddt_flush_start;
 

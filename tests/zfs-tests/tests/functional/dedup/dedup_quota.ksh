@@ -80,7 +80,7 @@ function do_setup
 	# Use 'xattr=sa' to prevent selinux xattrs influencing our accounting
 	log_must zpool create -o ashift=12 -f -O xattr=sa -m $MOUNTDIR $POOL $VDEV_GENERAL
 	log_must zfs set dedup=on $POOL
-	log_must set_tunable32 TXG_TIMEOUT 600
+	log_must set_tunable32 TXG_TIMEOUT 600000
 }
 
 function dedup_table_size

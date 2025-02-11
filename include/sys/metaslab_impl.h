@@ -501,6 +501,8 @@ struct metaslab {
 	 * stay cached.
 	 */
 	uint64_t	ms_selected_txg;
+	uint64_t	ms_activation_txg;	/* activation txg */
+
 	/*
 	 * ms_load/unload_time can be used for performance monitoring
 	 * (e.g. by dtrace or mdb).

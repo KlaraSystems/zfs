@@ -111,7 +111,7 @@
 static __attribute__((noreturn)) void txg_sync_thread(void *arg);
 static __attribute__((noreturn)) void txg_quiesce_thread(void *arg);
 
-uint_t zfs_txg_timeout = 5;	/* max seconds worth of delta per txg */
+uint_t zfs_txg_timeout = 5000;	/* max milliseconds worth of delta per txg */
 
 /*
  * Prepare the txg subsystem.
@@ -528,7 +528,7 @@ txg_sync_thread(void *arg)
 
 	start = delta = 0;
 	for (;;) {
-		clock_t timeout = zfs_txg_timeout * hz;
+		clock_t timeout = MAX(1, (zfs_txg_timeout * hz) / 1000);
 		clock_t timer;
 		uint64_t txg;
 
@@ -1074,4 +1074,4 @@ EXPORT_SYMBOL(txg_stalled);
 EXPORT_SYMBOL(txg_sync_waiting);
 
 ZFS_MODULE_PARAM(zfs_txg, zfs_txg_, timeout, UINT, ZMOD_RW,
-	"Max seconds worth of delta per txg");
+	"Max milliseconds worth of delta per txg");

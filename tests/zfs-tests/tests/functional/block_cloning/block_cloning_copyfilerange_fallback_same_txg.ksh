@@ -48,7 +48,7 @@ function cleanup
 
 log_onexit cleanup
 
-log_must set_tunable64 TXG_TIMEOUT 5000
+log_must set_tunable64 TXG_TIMEOUT 5000000
 
 log_must zpool create -o feature@block_cloning=enabled $TESTPOOL $DISKS
 

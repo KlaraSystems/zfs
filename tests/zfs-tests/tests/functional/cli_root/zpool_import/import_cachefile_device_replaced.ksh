@@ -135,7 +135,7 @@ function test_replacing_vdevs
 
 # We set zfs_txg_timeout to 1 to reduce resilvering time at each sync.
 ZFS_TXG_TIMEOUT=$(get_zfs_txg_timeout)
-set_zfs_txg_timeout 1
+set_zfs_txg_timeout 1000
 
 test_replacing_vdevs "$VDEV0 $VDEV1" \
     "$VDEV1" "$VDEV2" \
