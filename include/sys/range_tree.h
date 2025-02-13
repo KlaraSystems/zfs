@@ -48,6 +48,12 @@ typedef enum range_seg_type {
 	RANGE_SEG_NUM_TYPES,
 } range_seg_type_t;
 
+typedef enum range_tree_usecase {
+	RANGE_TREE_UC_UNKNOWN,
+	RANGE_TREE_UC_ALLOCATED_SPACE,
+	RANGE_TREE_UC_FREE_SPACE,
+} range_tree_usecase_t;
+
 /*
  * Note: the range_tree may not be accessed concurrently; consumers
  * must provide external locking if required.
@@ -66,6 +72,7 @@ typedef struct range_tree {
 	const range_tree_ops_t *rt_ops;
 	void		*rt_arg;
 	uint64_t	rt_gap;		/* allowable inter-segment gap */
+	range_tree_usecase_t	rt_usecase;
 
 	/*
 	 * The rt_histogram maintains a histogram of ranges. Each bucket,
@@ -279,6 +286,9 @@ range_tree_t *range_tree_create_gap(const range_tree_ops_t *ops,
     uint64_t gap);
 range_tree_t *range_tree_create(const range_tree_ops_t *ops,
     range_seg_type_t type, void *arg, uint64_t start, uint64_t shift);
+range_tree_t *range_tree_create_usecase(const range_tree_ops_t *ops,
+    range_seg_type_t type, void *arg, uint64_t start, uint64_t shift,
+    range_tree_usecase_t usecase);
 void range_tree_destroy(range_tree_t *rt);
 boolean_t range_tree_contains(range_tree_t *rt, uint64_t start, uint64_t size);
 range_seg_t *range_tree_find(range_tree_t *rt, uint64_t start, uint64_t size);

@@ -2741,7 +2741,8 @@ metaslab_init(metaslab_group_t *mg, uint64_t id, uint64_t object,
 	range_seg_type_t type =
 	    metaslab_calculate_range_tree_type(vd, ms, &start, &shift);
 
-	ms->ms_allocatable = range_tree_create(NULL, type, NULL, start, shift);
+	ms->ms_allocatable = range_tree_create_usecase(NULL, type, NULL, start,
+	    shift, RANGE_TREE_UC_FREE_SPACE);
 	for (int t = 0; t < TXG_SIZE; t++) {
 		ms->ms_allocating[t] = range_tree_create(NULL, type,
 		    NULL, start, shift);
