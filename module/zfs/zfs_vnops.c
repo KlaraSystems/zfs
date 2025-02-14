@@ -62,7 +62,7 @@
  * if feature@block_cloning is enabled, using functions and system calls that
  * attempt to clone blocks will act as though the feature is disabled.
  */
-int zfs_bclone_enabled = 1;
+int zfs_bclone_enabled = 0;
 
 /*
  * When set zfs_clone_range() waits for dirty data to be written to disk.
