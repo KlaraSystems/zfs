@@ -52,6 +52,7 @@ dist_systemdpreset_DATA = \
 	%D%/systemd/system/50-zfs.preset
 
 systemdunit_DATA = \
+	%D%/systemd/system/zfs-load-module.service \
 	%D%/systemd/system/zfs-import-cache.service \
 	%D%/systemd/system/zfs-import-scan.service \
 	%D%/systemd/system/zfs-import.target \
