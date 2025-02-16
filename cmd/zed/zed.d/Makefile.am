@@ -50,7 +50,7 @@ zed-install-data-hook:
 	set -x; for f in $(zedconfdefaults); do \
 	  [ -f "$(DESTDIR)$(zedconfdir)/$${f}" ] ||\
 	    [ -L "$(DESTDIR)$(zedconfdir)/$${f}" ] || \
-	    $(LN_S) "$(zedexecdir)/$${f}" "$(DESTDIR)$(zedconfdir)"; \
+	    echo "$${f}" >> "$(DESTDIR)$(zedexecdir)/DEFAULT-ENABLED" ; \
 	done
 
 SHELLCHECKSCRIPTS += $(dist_zedconf_DATA) $(dist_zedexec_SCRIPTS) $(nodist_zedexec_SCRIPTS)
