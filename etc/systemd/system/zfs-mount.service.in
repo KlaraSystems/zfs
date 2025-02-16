@@ -5,6 +5,7 @@ DefaultDependencies=no
 After=systemd-udev-settle.service
 After=zfs-import.target
 After=systemd-remount-fs.service
+After=zfs-load-module.service
 Before=local-fs.target
 ConditionPathIsDirectory=/sys/module/zfs
 
