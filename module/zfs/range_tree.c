@@ -337,7 +337,7 @@ range_tree_add_impl(void *arg, uint64_t start, uint64_t size, uint64_t fill)
 		uint64_t rstart = rs_get_start(rs, rt);
 		uint64_t rend = rs_get_end(rs, rt);
 		if (gap == 0) {
-			zfs_panic_recover("zfs: adding segment "
+			zfs_panic_recover_ms("zfs: adding segment "
 			    "(offset=%llx size=%llx) overlapping with "
 			    "existing one (offset=%llx size=%llx)",
 			    (longlong_t)start, (longlong_t)size,
@@ -492,7 +492,7 @@ range_tree_remove_impl(range_tree_t *rt, uint64_t start, uint64_t size,
 
 	/* Make sure we completely overlap with someone */
 	if (rs == NULL) {
-		zfs_panic_recover("zfs: removing nonexistent segment from "
+		zfs_panic_recover_ms("zfs: removing nonexistent segment from "
 		    "range tree (offset=%llx size=%llx)",
 		    (longlong_t)start, (longlong_t)size);
 		return;
@@ -529,7 +529,7 @@ range_tree_remove_impl(range_tree_t *rt, uint64_t start, uint64_t size,
 	}
 
 	if (!(rstart <= start && rend >= end)) {
-		zfs_panic_recover("zfs: removing segment "
+		zfs_panic_recover_ms("zfs: removing segment "
 		    "(offset=%llx size=%llx) not completely overlapped by "
 		    "existing one (offset=%llx size=%llx)",
 		    (longlong_t)start, (longlong_t)size,
