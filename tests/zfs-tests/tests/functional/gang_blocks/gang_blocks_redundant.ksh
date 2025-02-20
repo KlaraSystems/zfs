@@ -38,7 +38,7 @@ preamble
 log_onexit cleanup2
 
 log_must zpool create -f -o ashift=9 $TESTPOOL $DISKS
-set_tunable64 METASLAB_FORCE_GANGING 2000
+set_tunable64 METASLAB_FORCE_GANGING 1500
 set_tunable32 METASLAB_FORCE_GANGING_PCT 100
 for red in all most some none; do
 	log_must zfs create -o redundant_metadata=$red -o recordsize=512 \
