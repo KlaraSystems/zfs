@@ -2447,7 +2447,10 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		    ZCHECKSUM_FLAG_NOPWRITE) &&
 		    compress != ZIO_COMPRESS_OFF && zfs_nopwrite_enabled);
 
-		if (os->os_redundant_metadata == ZFS_REDUNDANT_METADATA_ALL)
+		if (os->os_redundant_metadata == ZFS_REDUNDANT_METADATA_ALL ||
+		    (os->os_redundant_metadata ==
+		    ZFS_REDUNDANT_METADATA_MOST &&
+		    zfs_redundant_metadata_most_ditto_level == 1))
 			gang_copies++;
 	}
 
@@ -2465,6 +2468,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 
 		if (DMU_OT_IS_ENCRYPTED(type)) {
 			copies = MIN(copies, SPA_DVAS_PER_BP - 1);
+			gang_copies = MIN(gang_copies, SPA_DVAS_PER_BP - 1);
 			nopwrite = B_FALSE;
 		} else {
 			dedup = B_FALSE;

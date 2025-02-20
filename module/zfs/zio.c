@@ -3172,8 +3172,7 @@ zio_write_gang_block(zio_t *pio, metaslab_class_t *mc)
 	 * we can't store 3 copies of the GBH in all cases, e.g. with
 	 * encryption, which uses DVA[2] for the IV+salt.
 	 */
-	int gbh_copies = MIN(gio->io_prop.zp_gang_copies,
-	    MAX(spa_max_replication(spa) - 1, copies));
+	int gbh_copies = gio->io_prop.zp_gang_copies;
 	ASSERT3S(gbh_copies, >, 0);
 	ASSERT3S(gbh_copies, <=, SPA_DVAS_PER_BP);
 
