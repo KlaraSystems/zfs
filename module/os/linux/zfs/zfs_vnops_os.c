@@ -837,8 +837,8 @@ out:
 		*zpp = zp;
 	}
 
-	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (error == 0 && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+		error = zil_commit(zilog, 0);
 
 	zfs_exit(zfsvfs, FTAG);
 	return (error);
@@ -1197,8 +1197,8 @@ out:
 		zfs_zrele_async(xzp);
 	}
 
-	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (error == 0 && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+		error = zil_commit(zilog, 0);
 
 	zfs_exit(zfsvfs, FTAG);
 	return (error);
@@ -1385,14 +1385,15 @@ out:
 
 	zfs_dirent_unlock(dl);
 
-	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
-
 	if (error != 0) {
 		zrele(zp);
 	} else {
 		zfs_znode_update_vfs(dzp);
 		zfs_znode_update_vfs(zp);
+
+		if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+			error = zil_commit(zilog, 0);
+
 	}
 	zfs_exit(zfsvfs, FTAG);
 	return (error);
@@ -1520,8 +1521,8 @@ out:
 	zfs_znode_update_vfs(zp);
 	zrele(zp);
 
-	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (error == 0 && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+		error = zil_commit(zilog, 0);
 
 	zfs_exit(zfsvfs, FTAG);
 	return (error);
@@ -2622,8 +2623,8 @@ out:
 	}
 
 out2:
-	if (os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (err == 0 && os->os_sync == ZFS_SYNC_ALWAYS)
+		err = zil_commit(zilog, 0);
 
 out3:
 	kmem_free(xattr_bulk, sizeof (sa_bulk_attr_t) * bulks);
@@ -3226,8 +3227,8 @@ out:
 	zfs_dirent_unlock(sdl);
 	zfs_dirent_unlock(tdl);
 
-	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (error == 0 && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+		error = zil_commit(zilog, 0);
 
 	zfs_exit(zfsvfs, FTAG);
 	return (error);
@@ -3426,7 +3427,7 @@ top:
 		*zpp = zp;
 
 		if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-			zil_commit(zilog, 0);
+			error = zil_commit(zilog, 0);
 	} else {
 		zrele(zp);
 	}
@@ -3659,11 +3660,13 @@ top:
 
 	zfs_dirent_unlock(dl);
 
-	if (!is_tmpfile && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (error == 0) {
+		if (!is_tmpfile && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+			error = zil_commit(zilog, 0);
 
-	if (is_tmpfile && zfsvfs->z_os->os_sync != ZFS_SYNC_DISABLED)
-		txg_wait_synced(dmu_objset_pool(zfsvfs->z_os), txg);
+		if (is_tmpfile && zfsvfs->z_os->os_sync != ZFS_SYNC_DISABLED)
+			txg_wait_synced(dmu_objset_pool(zfsvfs->z_os), txg);
+	}
 
 	zfs_znode_update_vfs(tdzp);
 	zfs_znode_update_vfs(szp);
@@ -3814,7 +3817,8 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 			 * Refer to the comment in zpl_fsync() for details.
 			 */
 			if (atomic_load_32(&zp->z_async_writes_cnt) > 0) {
-				zil_commit(zfsvfs->z_log, zp->z_id);
+				int _zilerr __maybe_unused =
+				    zil_commit(zfsvfs->z_log, zp->z_id);
 			}
 
 			if (PageWriteback(pp))
@@ -3917,8 +3921,13 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc,
 
 	zfs_rangelock_exit(lr);
 
-	if (commit)
-		zil_commit(zfsvfs->z_log, zp->z_id);
+	if (commit) {
+		err = zil_commit(zfsvfs->z_log, zp->z_id);
+		if (err != 0) {
+			zfs_exit(zfsvfs, FTAG);
+			return (err);
+		}
+	}
 
 	dataset_kstats_update_write_kstats(&zfsvfs->z_kstat, pglen);
 
