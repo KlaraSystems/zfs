@@ -704,6 +704,7 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, uint64_t flags)
 	int error = 0;
 	tx_state_t *tx = &dp->dp_tx;
 
+	ASSERT0(flags & ~(TXG_WAIT_SIGNAL | TXG_WAIT_SUSPEND));
 	ASSERT(!dsl_pool_config_held(dp));
 
 	mutex_enter(&tx->tx_sync_lock);
@@ -721,6 +722,15 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, uint64_t flags)
 	 * else interesting happens, we'll set an error and break out.
 	 */
 	while (tx->tx_synced_txg < txg) {
+		if ((flags & TXG_WAIT_SUSPEND) && spa_suspended(dp->dp_spa)) {
+			/*
+			 * Pool suspended and the caller does not want to
+			 * block; inform them immediately.
+			 */
+			error = SET_ERROR(ESHUTDOWN);
+			break;
+		}
+
 		dprintf("broadcasting sync more "
 		    "tx_synced=%llu waiting=%llu dp=%px\n",
 		    (u_longlong_t)tx->tx_synced_txg,

@@ -79,6 +79,10 @@ typedef struct txg_list {
  * If a signal arrives while waiting, abort and return EINTR.
  */
 #define	TXG_WAIT_SIGNAL		(1 << 0)
+/*
+ * If the pool suspends while waiting, abort and return ESHUTDOWN.
+ */
+#define	TXG_WAIT_SUSPEND	(1 << 1)
 
 struct dsl_pool;
 
