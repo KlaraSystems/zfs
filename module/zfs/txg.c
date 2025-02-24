@@ -764,6 +764,15 @@ txg_wait_synced(dsl_pool_t *dp, uint64_t txg)
 	VERIFY0(txg_wait_synced_flags(dp, txg, TXG_WAIT_NONE));
 }
 
+void
+txg_wait_kick(dsl_pool_t *dp)
+{
+	tx_state_t *tx = &dp->dp_tx;
+	mutex_enter(&tx->tx_sync_lock);
+	cv_broadcast(&tx->tx_sync_done_cv);
+	mutex_exit(&tx->tx_sync_lock);
+}
+
 /*
  * Wait for the specified open transaction group.  Set should_quiesce
  * when the current open txg should be quiesced immediately.

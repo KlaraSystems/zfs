@@ -115,6 +115,11 @@ extern int txg_wait_synced_flags(struct dsl_pool *dp, uint64_t txg,
  */
 extern void txg_wait_synced(struct dsl_pool *dp, uint64_t txg);
 
+/* 
+ * Wake all threads waiting in txg_wait_synced_flags() so they can reevaluate
+ */
+extern void txg_wait_kick(struct dsl_pool *dp);
+
 /*
  * Wait until the given transaction group, or one after it, is
  * the open transaction group.  Try to make this happen as soon
