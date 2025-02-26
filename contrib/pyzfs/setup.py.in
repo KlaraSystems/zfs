@@ -20,7 +20,7 @@ srcdir = "@abs_top_srcdir@/contrib/pyzfs"
 
 setup(
     name="pyzfs",
-    version="@VERSION@",
+    version="@VERSION@".replace("~", ""),
     description="Wrapper for libzfs_core",
     author="ClusterHQ",
     author_email="support@clusterhq.com",
