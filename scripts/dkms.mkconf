@@ -20,17 +20,18 @@ if [ -z "${pkgname}" ] || [ -z "${pkgver}" ] || [ -z "${filename}" ] ||
 	exit 1
 fi
 
+linux_min=$(awk '/Linux-Minimum:/{print $2}' META)
+
 exec cat >"${filename}" <<EOF
 PACKAGE_NAME="${pkgname}"
 PACKAGE_VERSION="${pkgver}"
 PACKAGE_CONFIG="${pkgcfg}"
 NO_WEAK_MODULES="yes"
-if [ -f \$kernel_source_dir/.config ]; then
-    . \$kernel_source_dir/.config
-    if [ "\$CONFIG_PREEMPT_RT" = "y" ]; then
-        BUILD_EXCLUSIVE_KERNEL="NOT ON PREEMPT_RT"
-    fi
-fi
+
+BUILD_EXCLUSIVE_CONFIG="!CONFIG_PREEMPT_RT"
+
+BUILD_EXCLUSIVE_KERNEL_MIN="${linux_min}"
+
 PRE_BUILD="configure
   --disable-dependency-tracking
   --prefix=/usr
