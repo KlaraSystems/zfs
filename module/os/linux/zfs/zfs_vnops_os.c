@@ -3675,22 +3675,45 @@ top:
 }
 
 static void
-zfs_putpage_sync_commit_cb(void *arg)
+zfs_putpage_sync_commit_cb(void *arg, int err)
 {
 	struct page *pp = arg;
 
-	ClearPageError(pp);
+	if (err == 0)
+		ClearPageError(pp);
+	else {
+		/*
+		 * ZIL couldn't guarantee the write made it out. Keep the
+		 * page dirty, and make it ineligible for reclaim this round.
+		 */
+		SetPageError(pp);
+		set_page_dirty(pp);
+		ClearPageReclaim(pp);
+	}
+
 	end_page_writeback(pp);
 }
 
 static void
-zfs_putpage_async_commit_cb(void *arg)
+zfs_putpage_async_commit_cb(void *arg, int err)
 {
 	struct page *pp = arg;
 	znode_t *zp = ITOZ(pp->mapping->host);
 
-	ClearPageError(pp);
+	if (err == 0)
+		ClearPageError(pp);
+	else {
+		/*
+		 * ZIL couldn't guarantee the write made it out. Keep the
+		 * page dirty, and make it ineligible for reclaim this round.
+		 */
+		SetPageError(pp);
+		set_page_dirty(pp);
+		ClearPageReclaim(pp);
+	}
+
 	end_page_writeback(pp);
+
 	atomic_dec_32(&zp->z_async_writes_cnt);
 }
 

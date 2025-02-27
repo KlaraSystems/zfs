@@ -881,7 +881,7 @@ zvol_log_write(zvol_state_t *zv, dmu_tx_t *tx, uint64_t offset,
 		lr = (lr_write_t *)&itx->itx_lr;
 		if (wr_state == WR_COPIED && dmu_read_by_dnode(zv->zv_dn,
 		    offset, len, lr+1, DMU_READ_NO_PREFETCH) != 0) {
-			zil_itx_destroy(itx);
+			zil_itx_destroy(itx, 0);
 			itx = zil_itx_create(TX_WRITE, sizeof (*lr));
 			lr = (lr_write_t *)&itx->itx_lr;
 			wr_state = WR_NEED_COPY;
