@@ -622,3 +622,36 @@ function corrupt_label_checksum # label_number vdev_path
 	dd if=/dev/urandom of=${2} seek=${offsets[$1]} bs=1 count=32 \
 	    conv=notrunc
 }
+
+#####
+#
+# loop device helpers
+
+function loop_device_attach # backing-file
+{
+	losetup --find --show $1
+}
+
+function loop_device_detach # device-node
+{
+	losetup --detach $1
+}
+
+function loop_device_backing_file # device-node
+{
+	losetup --list --noheadings --output back-file $1
+}
+
+function loop_device_create
+{
+	typeset backing_file=$(mktemp)
+	truncate -s 100M $backing_file
+	loop_device_attach $backing_file
+}
+
+function loop_device_destroy
+{
+	typeset backing_file=$(loop_device_backing_file)
+	loop_device_detach $backing_file
+	rm -f $backing_file
+}

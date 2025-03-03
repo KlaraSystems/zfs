@@ -719,6 +719,12 @@ tags = ['functional', 'exec']
 tests = ['fallocate_punch-hole']
 tags = ['functional', 'fallocate']
 
+[tests/functional/fsync]
+pre =
+post =
+tests = ['fsync_suspend_single', 'fsync_slog_fail']
+tags = ['functional', 'fsync']
+
 [tests/functional/features/async_destroy]
 tests = ['async_destroy_001_pos']
 tags = ['functional', 'features', 'async_destroy']

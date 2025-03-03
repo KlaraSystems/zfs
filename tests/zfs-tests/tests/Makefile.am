@@ -275,6 +275,7 @@ nobase_dist_datadir_zfs_tests_tests_DATA += \
 	functional/events/events.cfg \
 	functional/events/events_common.kshlib \
 	functional/fault/fault.cfg \
+	functional/fsync/fsync.kshlib \
 	functional/grow/grow.cfg \
 	functional/history/history.cfg \
 	functional/history/history_common.kshlib \
@@ -1558,6 +1559,8 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/features/large_dnode/large_dnode_008_pos.ksh \
 	functional/features/large_dnode/large_dnode_009_pos.ksh \
 	functional/features/large_dnode/setup.ksh \
+	functional/fsync/fsync_suspend_single.ksh \
+	functional/fsync/fsync_slog_fail.ksh \
 	functional/grow/grow_pool_001_pos.ksh \
 	functional/grow/grow_replicas_001_pos.ksh \
 	functional/history/cleanup.ksh \
