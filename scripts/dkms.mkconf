@@ -20,6 +20,8 @@ if [ -z "${pkgname}" ] || [ -z "${pkgver}" ] || [ -z "${filename}" ] ||
 	exit 1
 fi
 
+linux_min=$(awk '/Linux-Minimum:/{print $2}' META)
+
 exec cat >"${filename}" <<EOF
 PACKAGE_NAME="${pkgname}"
 PACKAGE_VERSION="${pkgver}"
@@ -27,6 +29,8 @@ PACKAGE_CONFIG="${pkgcfg}"
 NO_WEAK_MODULES="yes"
 
 BUILD_EXCLUSIVE_CONFIG="!CONFIG_PREEMPT_RT"
+
+BUILD_EXCLUSIVE_KERNEL_MIN="${linux_min}"
 
 PRE_BUILD="configure
   --disable-dependency-tracking
