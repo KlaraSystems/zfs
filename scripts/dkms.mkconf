@@ -25,6 +25,9 @@ PACKAGE_NAME="${pkgname}"
 PACKAGE_VERSION="${pkgver}"
 PACKAGE_CONFIG="${pkgcfg}"
 NO_WEAK_MODULES="yes"
+
+BUILD_EXCLUSIVE_CONFIG="!CONFIG_PREEMPT_RT"
+
 PRE_BUILD="configure
   --disable-dependency-tracking
   --prefix=/usr
