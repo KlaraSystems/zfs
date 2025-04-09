@@ -107,8 +107,9 @@ vdev_check_boot_reserve(spa_t *spa, vdev_t *childvd)
 	 * offset lets us access the boot area.
 	 */
 	zio_nowait(zio_vdev_child_io(pio, NULL, childvd,
-	    VDEV_BOOT_OFFSET - VDEV_LABEL_START_SIZE, abd, size, ZIO_TYPE_READ,
-	    ZIO_PRIORITY_ASYNC_READ, 0, vdev_child_done, pio));
+	    VDEV_BOOT_OFFSET - VDEV_LABEL_START_SIZE(childvd->vdev_large_label),
+	    abd, size, ZIO_TYPE_READ, ZIO_PRIORITY_ASYNC_READ, 0,
+	    vdev_child_done, pio));
 	zio_wait(pio);
 
 	unsigned char *buf = abd_to_buf(abd);
