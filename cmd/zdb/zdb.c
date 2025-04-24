@@ -1675,6 +1675,16 @@ dump_metaslab_stats(metaslab_t *msp)
 }
 
 static void
+dump_allocated(void *arg, uint64_t start, uint64_t size)
+{
+	uint64_t *off = arg;
+	if (*off != start)
+		(void) printf("ALLOC: %"PRIu64" %"PRIu64"\n", *off,
+		    start - *off);
+	*off = start + size;
+}
+
+static void
 dump_metaslab(metaslab_t *msp)
 {
 	vdev_t *vd = msp->ms_group->mg_vd;
@@ -1690,13 +1700,24 @@ dump_metaslab(metaslab_t *msp)
 	    (u_longlong_t)msp->ms_id, (u_longlong_t)msp->ms_start,
 	    (u_longlong_t)space_map_object(sm), freebuf);
 
-	if (dump_opt['m'] > 2 && !dump_opt['L']) {
+	if (dump_opt[ALLOCATED_OPT] ||
+	    (dump_opt['m'] > 2 && !dump_opt['L'])) {
 		mutex_enter(&msp->ms_lock);
 		VERIFY0(metaslab_load(msp));
+	}
+
+	if (dump_opt['m'] > 2 && !dump_opt['L']) {
 		zfs_range_tree_stat_verify(msp->ms_allocatable);
 		dump_metaslab_stats(msp);
-		metaslab_unload(msp);
-		mutex_exit(&msp->ms_lock);
+	}
+
+	if (dump_opt[ALLOCATED_OPT]) {
+		uint64_t off = msp->ms_start;
+		zfs_range_tree_walk(msp->ms_allocatable, dump_allocated,
+		    &off);
+		if (off != msp->ms_start + msp->ms_size)
+			(void) printf("ALLOC: %"PRIu64" %"PRIu64"\n", off,
+			    msp->ms_size - off);
 	}
 
 	if (dump_opt['m'] > 1 && sm != NULL &&
@@ -1709,6 +1730,12 @@ dump_metaslab(metaslab_t *msp)
 		    (u_longlong_t)msp->ms_fragmentation);
 		dump_histogram(sm->sm_phys->smp_histogram,
 		    SPACE_MAP_HISTOGRAM_SIZE, sm->sm_shift);
+	}
+
+	if (dump_opt[ALLOCATED_OPT] ||
+	    (dump_opt['m'] > 2 && !dump_opt['L'])) {
+		metaslab_unload(msp);
+		mutex_exit(&msp->ms_lock);
 	}
 
 	if (vd->vdev_ops == &vdev_draid_ops)
@@ -1747,8 +1774,9 @@ print_vdev_metaslab_header(vdev_t *vd)
 		}
 	}
 
-	(void) printf("\tvdev %10llu   %s",
-	    (u_longlong_t)vd->vdev_id, bias_str);
+	(void) printf("\tvdev %10llu\t%s  metaslab shift %4llu",
+	    (u_longlong_t)vd->vdev_id, bias_str,
+	    (u_longlong_t)vd->vdev_ms_shift);
 
 	if (ms_flush_data_obj != 0) {
 		(void) printf("   ms_unflushed_phys object %llu",
@@ -10189,6 +10217,8 @@ main(int argc, char **argv)
 		{"zstd-headers",	no_argument,		NULL, 'Z'},
 		{"allocation-scanner",	optional_argument,	NULL,
 		    ALLOCATION_SCANNER_OPT},
+		{"allocated-map",	no_argument,		NULL,
+		    ALLOCATED_OPT},
 		{0, 0, 0, 0}
 	};
 
@@ -10225,6 +10255,7 @@ main(int argc, char **argv)
 		case 'u':
 		case 'y':
 		case 'Z':
+		case ALLOCATED_OPT:
 			dump_opt[c]++;
 			dump_all = 0;
 			break;
