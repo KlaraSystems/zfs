@@ -19,7 +19,7 @@
 .\"
 .\" Copyright (c) 2024, Klara, Inc.
 .\"
-.Dd November 1, 2024
+.Dd June 30, 2025
 .Dt ZFS 4
 .Os
 .
@@ -2500,6 +2500,26 @@ the xattr so as to not accumulate duplicates.
 .
 .It Sy zio_requeue_io_start_cut_in_line Ns = Ns Sy 0 Ns | Ns 1 Pq int
 Prioritize requeued I/O.
+.
+.It Sy zfs_delete_inode Ns = Ns Sy 0 Ns | Ns 1 Pq int
+Sets whether the kernel should free an inode structure when the last reference
+is released, or cache it in memory.
+.Pp
+A live inode structure "pins" versious internal OpenZFS structures in memory,
+which can result in large amounts of "unusable" memory on systems with lots of
+infrequently-accessed files, until the kernel's memory pressure mechanism
+askes OpenZFS to release them.
+.Pp
+The default value of
+.Sy 0
+always caches inodes that appear to still exist on disk.
+Setting it to
+.Sy 1
+will immediately release unused inodes and their associated memory back to the
+dbuf cache or the ARC for reused, but may reduce performance if inodes are
+frequently evicted and reloaded.
+.Pp
+This parameter is only available on Linux.
 .
 .It Sy zio_taskq_batch_pct Ns = Ns Sy 80 Ns % Pq uint
 Percentage of online CPUs which will run a worker thread for I/O.
