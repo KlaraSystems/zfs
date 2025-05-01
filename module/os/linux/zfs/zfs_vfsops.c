@@ -1533,6 +1533,7 @@ zfs_domount(struct super_block *sb, zfs_mnt_t *zm, int silent)
 
 	/* Set callback operations for the file system. */
 	sb->s_op = &zpl_super_operations;
+	sb->s_d_op = &zpl_dentry_operations;
 	sb->s_xattr = zpl_xattr_handlers;
 	sb->s_export_op = &zpl_export_operations;
 
