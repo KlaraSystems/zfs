@@ -1567,6 +1567,7 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/fsync/fsync_suspend_single.ksh \
 	functional/fsync/fsync_slog_fail.ksh \
 	functional/gang_blocks/cleanup.ksh \
+	functional/gang_blocks/gang_blocks_001_pos.ksh \
 	functional/gang_blocks/gang_blocks_redundant.ksh \
 	functional/gang_blocks/setup.ksh \
 	functional/grow/grow_pool_001_pos.ksh \
