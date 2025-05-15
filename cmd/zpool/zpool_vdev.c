@@ -1638,7 +1638,12 @@ construct_spec(nvlist_t *props, int argc, char **argv)
 			}
 
 			if (is_log) {
-				if (strcmp(type, VDEV_TYPE_MIRROR) != 0) {
+				/*
+				 * TODO: only AnyRAID mirror is expected to be
+				 * allowed.
+				 */
+				if (strcmp(type, VDEV_TYPE_MIRROR) != 0 &&
+				    strcmp(type, VDEV_TYPE_ANYRAID) != 0) {
 					(void) fprintf(stderr,
 					    gettext("invalid vdev "
 					    "specification: unsupported 'log' "
