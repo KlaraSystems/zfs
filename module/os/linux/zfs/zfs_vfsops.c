@@ -288,10 +288,12 @@ zfs_sync(struct super_block *sb, int wait, cred_t *cr)
 		 * If the system is shutting down, then skip any
 		 * filesystems which may exist on a suspended pool.
 		 */
+#if 0
 		if (spa_suspended(dp->dp_spa)) {
 			zfs_exit(zfsvfs, FTAG);
 			return (0);
 		}
+#endif
 
 		if (zfsvfs->z_log != NULL) {
 			error = zil_commit(zfsvfs->z_log, 0);
