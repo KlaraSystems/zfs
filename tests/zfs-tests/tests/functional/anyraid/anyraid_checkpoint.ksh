@@ -36,7 +36,7 @@
 # 2. Take a checkpoint
 # 3. Allocate more space
 # 4. Roll back to the checkpoint
-# 5. Verify that the region map looks like what it did originally
+# 5. Verify that the tile map looks like what it did originally
 #
 
 verify_runnable "global"

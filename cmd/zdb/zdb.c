@@ -9270,12 +9270,12 @@ print_separator_line(int cols, int colwidth, boolean_t *print, boolean_t *final)
 }
 
 static void
-zdb_print_anyraid_region_layout(vdev_t *vd)
+zdb_print_anyraid_tile_layout(vdev_t *vd)
 {
 	ASSERT3P(vd->vdev_ops, ==, &vdev_anyraid_ops);
 	vdev_anyraid_t *var = vd->vdev_tsd;
 	int cols = vd->vdev_children;
-	int textwidth = MAX(8, log_10(avl_numnodes(&var->vd_region_map)) +
+	int textwidth = MAX(8, log_10(avl_numnodes(&var->vd_tile_map)) +
 	    var->vd_nparity > 0 ? log_10(var->vd_nparity + 1) + 1 : 0);
 	int colwidth = textwidth + 2;
 
@@ -9286,17 +9286,17 @@ zdb_print_anyraid_region_layout(vdev_t *vd)
 		    sizeof (**table));
 	}
 
-	anyraid_region_t *cur = avl_first(&var->vd_region_map);
+	anyraid_tile_t *cur = avl_first(&var->vd_tile_map);
 	while (cur) {
 		int p = 0;
-		for (anyraid_region_node_t *node = list_head(&cur->ar_list);
-		    node; node = list_next(&cur->ar_list, node)) {
+		for (anyraid_tile_node_t *node = list_head(&cur->at_list);
+		    node; node = list_next(&cur->at_list, node)) {
 			ASSERT3U(p, <=, var->vd_nparity + 1);
 			char **next =
-			    &(table[node->arn_disk][node->arn_offset]);
+			    &(table[node->atn_disk][node->atn_offset]);
 			*next = malloc(textwidth + 1);
 			int len = snprintf(*next, textwidth, "%d",
-			    cur->ar_region_id);
+			    cur->at_tile_id);
 			if (var->vd_nparity > 0) {
 				(void) snprintf((*next) + len, textwidth - len,
 				    "-%d", p);
@@ -9304,7 +9304,7 @@ zdb_print_anyraid_region_layout(vdev_t *vd)
 			p++;
 		}
 		ASSERT3U(p, ==, var->vd_nparity + 1);
-		cur = AVL_NEXT(&var->vd_region_map, cur);
+		cur = AVL_NEXT(&var->vd_tile_map, cur);
 	}
 
 	// These are needed to generate the separator lines
@@ -9322,7 +9322,7 @@ zdb_print_anyraid_region_layout(vdev_t *vd)
 	(void) printf("\n");
 	print_separator_line(cols, colwidth, printed, final);
 
-	// Print out the actual region map, one row at a time.
+	// Print out the actual tile map, one row at a time.
 	for (int i = 0; ; i++) {
 		int last_printed = INT_MAX;
 		for (int v = 0; v < cols; v++) {
@@ -9401,10 +9401,10 @@ print_anyraid_mapping(vdev_t *vd, int child, int mapping,
 		return;
 	}
 
-	uint64_t region_size;
-	if (nvlist_lookup_uint64(hnvl, VDEV_ANYRAID_HEADER_REGION_SIZE,
-	    &region_size) != 0) {
-		(void) printf("No region size\n");
+	uint64_t tile_size;
+	if (nvlist_lookup_uint64(hnvl, VDEV_ANYRAID_HEADER_TILE_SIZE,
+	    &tile_size) != 0) {
+		(void) printf("No tile size\n");
 		free_header(header, header_size);
 		return;
 	}
@@ -9427,8 +9427,8 @@ print_anyraid_mapping(vdev_t *vd, int child, int mapping,
 	    &disk_id) != 0)
 		(void) printf("No valid disk ID\n");
 
-	(void) printf("version:    %6d\tregion size: %8lx\ttxg: %lu\n",
-	    version, region_size, written_txg);
+	(void) printf("version:    %6d\ttile size: %8lx\ttxg: %lu\n",
+	    version, tile_size, written_txg);
 	(void) printf("map length: %6u\tdisk id: %3u\n", map_length, disk_id);
 
 	// Read in and print the actual mapping data
@@ -9455,7 +9455,7 @@ print_anyraid_mapping(vdev_t *vd, int child, int mapping,
 	}
 	free_header(header, header_size);
 
-	uint32_t map = -1, cur_region = 0;
+	uint32_t map = -1, cur_tile = 0;
 	/*
 	 * For now, all entries are the size of a uint32_t. If that
 	 * ever changes, we need better logic here.
@@ -9504,17 +9504,17 @@ print_anyraid_mapping(vdev_t *vd, int child, int mapping,
 				anyraid_map_skip_entry_t *amse =
 				    &entry->ame_u.ame_amse;
 				ASSERT0(par_cnt);
-				cur_region += amse_get_region_id(amse);
+				cur_tile += amse_get_tile_id(amse);
 				(void) printf("skip %u\n",
-				    amse_get_region_id(amse));
+				    amse_get_tile_id(amse));
 				break;
 			}
 			case AMET_LOC: {
 				anyraid_map_loc_entry_t *amle =
 				    &entry->ame_u.ame_amle;
 				if (par_cnt == 0) {
-					(void) printf("loc %u:", cur_region);
-					cur_region++;
+					(void) printf("loc %u:", cur_tile);
+					cur_tile++;
 				}
 				(void) printf("\td%u o%u,", amle->amle_disk,
 				    amle->amle_offset);
@@ -9534,7 +9534,7 @@ print_anyraid_mapping(vdev_t *vd, int child, int mapping,
 	if (map_buf)
 		abd_return_buf(map_abds[map], map_buf, SPA_MAXBLOCKSIZE);
 
-	var->vd_region_size = region_size;
+	var->vd_tile_size = tile_size;
 
 	for (; i >= 0; i--)
 		abd_free(map_abds[i]);
@@ -9596,31 +9596,31 @@ zdb_dump_anyraid_map_vdev(vdev_t *vd, int verbosity)
 
 	(void) printf("\t%-5s%11llu   %s %16llx\n",
 	    "vdev", (u_longlong_t)vd->vdev_id,
-	    "region_size", (u_longlong_t)var->vd_region_size);
-	(void) printf("\t%-8s%8llu   %-12s %10u\n", "regions",
-	    (u_longlong_t)avl_numnodes(&var->vd_region_map),
-	    "checkpoint region", var->vd_checkpoint_region);
+	    "tile_size", (u_longlong_t)var->vd_tile_size);
+	(void) printf("\t%-8s%8llu   %-12s %10u\n", "tiles",
+	    (u_longlong_t)avl_numnodes(&var->vd_tile_map),
+	    "checkpoint tile", var->vd_checkpoint_tile);
 	(void) printf("\t%16s   %12s   %13s\n", "----------------",
 	    "------------", "-------------");
 
-	anyraid_region_t *cur = avl_first(&var->vd_region_map);
-	anyraid_region_node_t *curn = cur != NULL ?
-	    list_head(&cur->ar_list) : NULL;
+	anyraid_tile_t *cur = avl_first(&var->vd_tile_map);
+	anyraid_tile_node_t *curn = cur != NULL ?
+	    list_head(&cur->at_list) : NULL;
 	while (cur) {
 		(void) printf("\t%-8s%8llu   %-8s%04llx   %-11s%02llx\n",
-		    "region", (u_longlong_t)cur->ar_region_id,
-		    "offset", (u_longlong_t)curn->arn_offset,
-		    "disk", (u_longlong_t)curn->arn_disk);
-		curn = list_next(&cur->ar_list, curn);
+		    "tile", (u_longlong_t)cur->at_tile_id,
+		    "offset", (u_longlong_t)curn->atn_offset,
+		    "disk", (u_longlong_t)curn->atn_disk);
+		curn = list_next(&cur->at_list, curn);
 		if (curn == NULL) {
-			cur = AVL_NEXT(&var->vd_region_map, cur);
-			curn = cur != NULL ? list_head(&cur->ar_list) : NULL;
+			cur = AVL_NEXT(&var->vd_tile_map, cur);
+			curn = cur != NULL ? list_head(&cur->at_list) : NULL;
 		}
 	}
 
 	(void) printf("\n");
 	if (verbosity > 0)
-		zdb_print_anyraid_region_layout(vd);
+		zdb_print_anyraid_tile_layout(vd);
 
 	if (verbosity > 1)
 		zdb_print_anyraid_ondisk_maps(vd, verbosity);
@@ -9631,7 +9631,7 @@ zdb_dump_anyraid_map(char *vdev_str, spa_t *spa, int verbosity)
 {
 	vdev_t *rvd, *vd;
 
-	(void) printf("\nAnyRAID regions:\n");
+	(void) printf("\nAnyRAID tiles:\n");
 
 	/* A specific vdev. */
 	if (vdev_str != NULL) {

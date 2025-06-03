@@ -43,7 +43,7 @@ tags = ['functional', 'alloc_class']
 
 [tests/functional/anyraid]
 tests = [ 'anyraid_clean_mirror_001_pos', 'anyraid_clean_mirror_002_pos',
-    'anyraid_clean_mirror_003_pos', 'anyraid_region_layout', 'anyraid_checkpoint']
+    'anyraid_clean_mirror_003_pos', 'anyraid_tile_layout', 'anyraid_checkpoint']
 tags = ['functional', 'anyraid']
 
 [tests/functional/append]

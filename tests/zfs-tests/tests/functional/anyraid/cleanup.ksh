@@ -31,4 +31,4 @@
 poolexists $TESTPOOL && destroy_pool $TESTPOOL
 
 log_must delete_sparse_files
-restore_tunable ANYRAID_MIN_REGION_SIZE
+restore_tunable ANYRAID_MIN_TILE_SIZE

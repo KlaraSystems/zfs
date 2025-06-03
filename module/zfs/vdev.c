@@ -6538,7 +6538,7 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 					break;
 				}
 				break;
-			case VDEV_PROP_ANYRAID_CAP_REGIONS:
+			case VDEV_PROP_ANYRAID_CAP_TILES:
 			{
 				vdev_t *pvd = vd->vdev_parent;
 				uint64_t total = 0;
@@ -6561,7 +6561,7 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 				    NULL, total, ZPROP_SRC_NONE);
 				continue;
 			}
-			case VDEV_PROP_ANYRAID_NUM_REGIONS:
+			case VDEV_PROP_ANYRAID_NUM_TILES:
 			{
 				vdev_t *pvd = vd->vdev_parent;
 				uint64_t total = 0;
@@ -6584,7 +6584,7 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 				    NULL, total, ZPROP_SRC_NONE);
 				continue;
 			}
-			case VDEV_PROP_ANYRAID_REGION_SIZE:
+			case VDEV_PROP_ANYRAID_TILE_SIZE:
 			{
 				vdev_t *pvd = vd->vdev_parent;
 				vdev_anyraid_t *var = NULL;
@@ -6597,7 +6597,7 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 					continue;
 				}
 				vdev_prop_add_list(outnvl, propname,
-				    NULL, var->vd_region_size, ZPROP_SRC_NONE);
+				    NULL, var->vd_tile_size, ZPROP_SRC_NONE);
 				continue;
 			}
 			default:

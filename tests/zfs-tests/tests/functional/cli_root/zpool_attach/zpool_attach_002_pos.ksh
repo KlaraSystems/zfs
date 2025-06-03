@@ -43,14 +43,14 @@ verify_runnable "global"
 
 cleanup() {
 	log_must zpool destroy $TESTPOOL2
-	restore_tunable ANYRAID_MIN_REGION_SIZE
+	restore_tunable ANYRAID_MIN_TILE_SIZE
 }
 
 log_onexit cleanup
 
 log_must truncate --size=8G /$TESTPOOL/vdev_file.{0,1,2,3}
-save_tunable ANYRAID_MIN_REGION_SIZE
-set_tunable64 ANYRAID_MIN_REGION_SIZE 1073741824
+save_tunable ANYRAID_MIN_TILE_SIZE
+set_tunable64 ANYRAID_MIN_TILE_SIZE 1073741824
 
 log_assert "'zpool attach' works to expand mirrors and anyraid vdevs"
 

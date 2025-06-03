@@ -29,7 +29,7 @@
 
 #
 # DESCRIPTION:
-# Anyraid disks intelligently select which regions to use
+# Anyraid disks intelligently select which tiles to use
 #
 # STRATEGY:
 # 1. Create an anyraid1 vdev with 1 large disk and 2 small disks
@@ -41,7 +41,7 @@ verify_runnable "global"
 cleanup() {
 	zpool destroy $TESTPOOL2
 	zpool destroy $TESTPOOL
-	set_tunable64 ANYRAID_MIN_REGION_SIZE 1073741824
+	set_tunable64 ANYRAID_MIN_TILE_SIZE 1073741824
 }
 
 log_onexit cleanup
@@ -50,9 +50,9 @@ log_must create_pool $TESTPOOL $DISKS
 
 log_must truncate --size=512M /$TESTPOOL/vdev_file.{0,1,2}
 log_must truncate --size=1G /$TESTPOOL/vdev_file.3
-set_tunable64 ANYRAID_MIN_REGION_SIZE 67108864
+set_tunable64 ANYRAID_MIN_TILE_SIZE 67108864
 
-log_assert "Anyraid disks intelligently select which regions to use"
+log_assert "Anyraid disks intelligently select which tiles to use"
 
 log_must create_pool $TESTPOOL2 anyraid1 /$TESTPOOL/vdev_file.{0,1,2,3}
 
@@ -67,4 +67,4 @@ cap=$(zpool get -Hp -o value size $TESTPOOL2)
 #
 log_must dd if=/dev/urandom of=/$TESTPOOL2/f1 bs=1M count=$((64 * 7 - 1))
 
-log_pass "Anyraid disks intelligently select which regions to use"
+log_pass "Anyraid disks intelligently select which tiles to use"

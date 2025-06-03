@@ -29,7 +29,7 @@
 
 verify_runnable "global"
 
-save_tunable ANYRAID_MIN_REGION_SIZE
-set_tunable64 ANYRAID_MIN_REGION_SIZE 67108864
+save_tunable ANYRAID_MIN_TILE_SIZE
+set_tunable64 ANYRAID_MIN_TILE_SIZE 67108864
 
 log_pass

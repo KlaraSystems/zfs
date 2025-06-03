@@ -29,6 +29,6 @@
 
 verify_runnable "global"
 
-restore_tunable ANYRAID_MIN_REGION_SIZE
+restore_tunable ANYRAID_MIN_TILE_SIZE
 
 default_cleanup

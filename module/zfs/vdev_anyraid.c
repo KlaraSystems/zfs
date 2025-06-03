@@ -33,9 +33,9 @@
  * will work on drives smaller than 1TB, the default tuning values are
  * optimized for drives of at least that size.
  *
- * Anyraid works by splitting the vdev into "regions". Each region is the same
+ * Anyraid works by splitting the vdev into "tiles". Each tile is the same
  * size; by default, 1/64th of the size of the smallest disk in the vdev, or
- * 16GiB, whichever is larger. A region represents an area of
+ * 16GiB, whichever is larger. A tile represents an area of
  * logical-to-physical mapping: consecutive tiles in logical space (the first
  * physical tiles on disk, or to the same disk at all. When parity is not
  * When parity is not considered, this provides some small benefits (device
@@ -47,46 +47,46 @@
  * smaller drives can work together to mirror larger ones dynamically and
  * seamlessly.
  *
- * The mapping for these regions is stored in a special area at the start of
+ * The mapping for these tiles is stored in a special area at the start of
  * each device. Each disk has 8 fully copies of the tile map, which rotate
- * per txg in a similar manner to uberblocks. The region map itself is 64MiB,
+ * per txg in a similar manner to uberblocks. The tile map itself is 64MiB,
  * plus a small header (~8KiB) before it.
  *
  * The exact space that is allocatable in an anyraid vdev is not easy to
  * calculate in the general case. It's a variant of the bin-packing problem, so
  * an optimal solution is complex. However, this case seems to be a sub-problem
  * where greedy algorithms give optimal solutions, so that is what we do here.
- * Each region is allocated from the P disks that have the most available
+ * Each tile is allocated from the P disks that have the most available
  * capacity. This does mean that calculating the size of a disk requires
  * running the allocation algorithm until completion, but for the relatively
- * small number of regions we are working with, an O(n * log n) runtime is
+ * small number of tiles we are working with, an O(n * log n) runtime is
  * acceptable.
  *
- * Currently, there is a limit of 2^24 regions in an anyraid vdev: 2^8 disks,
- * and 2^16 regions per disk. This means that by default, the largest device
+ * Currently, there is a limit of 2^24 tiles in an anyraid vdev: 2^8 disks,
+ * and 2^16 tiles per disk. This means that by default, the largest device
  * that can be fully utilized by an anyraid vdev is 1024 times the size of the
  * smallest device that was present during device creation. This is not a
  * fundamental limit, and could be expanded in the future. However, this does
- * affect the size of the region map. Currently, the region map can always
- * store all regions without running out of space; 2^24 4-byte entries is 2^26
- * bytes = 64MiB. Expanding the maximum number of regions per disk or disks per
- * vdev would necessarily involve either expanding the region map or adding
- * handling for the region map running out of space.
+ * affect the size of the tile map. Currently, the tile map can always
+ * store all tiles without running out of space; 2^24 4-byte entries is 2^26
+ * bytes = 64MiB. Expanding the maximum number of tiles per disk or disks per
+ * vdev would necessarily involve either expanding the tile map or adding
+ * handling for the tile map running out of space.
  *
  * When it comes to performance, there is a tradeoff. While the per-disk I/O
  * rates are equivalent to using mirrors (because only a small amount of extra
  * logic is used on top of the mirror code), the overall vdev throughput may
- * not be. This is because the actively used regions may be allocated to the
+ * not be. This is because the actively used tiles may be allocated to the
  * same devices, leaving other devices idle for writes. This is especially true
  * as the variation in drive sizes increases. To some extent, this problem is
  * fundamental: writes fill up disks. If we want to fill all the disks, smaller
  * disks will not be able to satisfy as many writes. Rewrite- and read-heavy
  * workloads will encounter this problem to a lesser extent. The performance
- * downsides can be mitigated with smaller region sizes, larger metaslabs,
+ * downsides can be mitigated with smaller tile sizes, larger metaslabs,
  * and more active metaslab allocators.
  *
- * Checkpoints are currently supported by storing the maximum allocated region
- * at the time of the checkpoint, and then discarding all regions after that
+ * Checkpoints are currently supported by storing the maximum allocated tile
+ * at the time of the checkpoint, and then discarding all tiles after that
  * when a checkpoint is rolled back. Because device addition is forbidden while
  * a checkpoint is outstanding, no more complex logic is required.
  *
@@ -98,7 +98,7 @@
  *
  * Possible future work also includes:
  *   Enabling rebalancing with an outstanding checkpoint
- *   Trim and initialize beyond the end of the allocated regions
+ *   Trim and initialize beyond the end of the allocated tiles
  *   Store device asizes so we can make better allocation decisions while a
  *     device is faulted
  */
@@ -110,24 +110,24 @@
 #include <sys/vdev_mirror.h>
 
 /*
- * The smallest allowable region size. Shrinking this is mostly useful for
+ * The smallest allowable tile size. Shrinking this is mostly useful for
  * testing. Increasing it may be useful if you plan to add much larger disks to
  * an array in the future, and want to be sure their full capacity will be
  * usable.
  */
-uint64_t zfs_anyraid_min_region_size = (16ULL << 30);
+uint64_t zfs_anyraid_min_tile_size = (16ULL << 30);
 /*
- * This controls how many regions we have per disk (based on the smallest disk
+ * This controls how many tiles we have per disk (based on the smallest disk
  * present at creation time)
  */
 int anyraid_disk_shift = 6;
 
 static inline int
-anyraid_region_compare(const void *p1, const void *p2)
+anyraid_tile_compare(const void *p1, const void *p2)
 {
-	const anyraid_region_t *r1 = p1, *r2 = p2;
+	const anyraid_tile_t *r1 = p1, *r2 = p2;
 
-	return (TREE_CMP(r1->ar_region_id, r2->ar_region_id));
+	return (TREE_CMP(r1->at_tile_id, r2->at_tile_id));
 }
 
 static inline int
@@ -172,8 +172,8 @@ vdev_anyraid_init(spa_t *spa, nvlist_t *nv, void **tsd)
 	var->vd_parity_type = parity_type;
 	var->vd_nparity = nparity;
 	rw_init(&var->vd_lock, NULL, RW_DEFAULT, NULL);
-	avl_create(&var->vd_region_map, anyraid_region_compare,
-	    sizeof (anyraid_region_t), offsetof(anyraid_region_t, ar_node));
+	avl_create(&var->vd_tile_map, anyraid_tile_compare,
+	    sizeof (anyraid_tile_t), offsetof(anyraid_tile_t, at_node));
 	avl_create(&var->vd_children_tree, anyraid_child_compare,
 	    sizeof (vdev_anyraid_node_t),
 	    offsetof(vdev_anyraid_node_t, van_node));
@@ -195,19 +195,19 @@ static void
 vdev_anyraid_fini(vdev_t *vd)
 {
 	vdev_anyraid_t *var = vd->vdev_tsd;
-	anyraid_region_t *region = NULL;
+	anyraid_tile_t *tile = NULL;
 	void *cookie = NULL;
-	while ((region = avl_destroy_nodes(&var->vd_region_map, &cookie))) {
+	while ((tile = avl_destroy_nodes(&var->vd_tile_map, &cookie))) {
 		if (var->vd_nparity != 0) {
-			anyraid_region_node_t *arn = NULL;
-			while ((arn = list_remove_head(&region->ar_list))) {
-				kmem_free(arn, sizeof (*arn));
+			anyraid_tile_node_t *atn = NULL;
+			while ((atn = list_remove_head(&tile->at_list))) {
+				kmem_free(atn, sizeof (*atn));
 			}
-			list_destroy(&region->ar_list);
+			list_destroy(&tile->at_list);
 		}
-		kmem_free(region, sizeof (*region));
+		kmem_free(tile, sizeof (*tile));
 	}
-	avl_destroy(&var->vd_region_map);
+	avl_destroy(&var->vd_tile_map);
 
 	vdev_anyraid_node_t *node;
 	cookie = NULL;
@@ -241,32 +241,32 @@ vdev_anyraid_config_generate(vdev_t *vd, nvlist_t *nv)
  */
 
 /*
- * Add an entry to the region map for the provided region.
+ * Add an entry to the tile map for the provided tile.
  */
 static void
-create_region_entry(vdev_anyraid_t *var, anyraid_map_loc_entry_t *amle,
-    uint8_t *par_cnt, anyraid_region_t **out_ar, uint32_t *cur_region)
+create_tile_entry(vdev_anyraid_t *var, anyraid_map_loc_entry_t *amle,
+    uint8_t *pat_cnt, anyraid_tile_t **out_ar, uint32_t *cur_tile)
 {
 	uint8_t disk = amle->amle_disk;
 	uint16_t offset = amle->amle_offset;
-	anyraid_region_t *ar = *out_ar;
+	anyraid_tile_t *ar = *out_ar;
 
-	if (*par_cnt == 0) {
+	if (*pat_cnt == 0) {
 		ar = kmem_alloc(sizeof (*ar), KM_SLEEP);
-		ar->ar_region_id = *cur_region;
-		avl_add(&var->vd_region_map, ar);
-		list_create(&ar->ar_list,
-		    sizeof (anyraid_region_node_t),
-		    offsetof(anyraid_region_node_t, arn_node));
+		ar->at_tile_id = *cur_tile;
+		avl_add(&var->vd_tile_map, ar);
+		list_create(&ar->at_list,
+		    sizeof (anyraid_tile_node_t),
+		    offsetof(anyraid_tile_node_t, atn_node));
 
-		(*cur_region)++;
+		(*cur_tile)++;
 	}
 
-	anyraid_region_node_t *arn = kmem_alloc(sizeof (*arn), KM_SLEEP);
-	arn->arn_disk = disk;
-	arn->arn_offset = offset;
-	list_insert_tail(&ar->ar_list, arn);
-	*par_cnt = (*par_cnt + 1) % (var->vd_nparity + 1);
+	anyraid_tile_node_t *arn = kmem_alloc(sizeof (*arn), KM_SLEEP);
+	arn->atn_disk = disk;
+	arn->atn_offset = offset;
+	list_insert_tail(&ar->at_list, arn);
+	*pat_cnt = (*pat_cnt + 1) % (var->vd_nparity + 1);
 
 	vdev_anyraid_node_t *van = var->vd_children[disk];
 	avl_remove(&var->vd_children_tree, van);
@@ -456,9 +456,9 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 		return (SET_ERROR(EINVAL));
 	}
 
-	uint64_t region_size;
-	if (nvlist_lookup_uint64(header.ah_nvl, VDEV_ANYRAID_HEADER_REGION_SIZE,
-	    &region_size) != 0) {
+	uint64_t tile_size;
+	if (nvlist_lookup_uint64(header.ah_nvl, VDEV_ANYRAID_HEADER_TILE_SIZE,
+	    &tile_size) != 0) {
 		zfs_dbgmsg("Error opening anyraid vdev %llu: No tile size",
 		    (u_longlong_t)vd->vdev_id);
 		free_header(&header, header_size);
@@ -474,12 +474,12 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 		return (SET_ERROR(EINVAL));
 	}
 
-	var->vd_checkpoint_region = UINT32_MAX;
+	var->vd_checkpoint_tile = UINT32_MAX;
 	(void) nvlist_lookup_uint32(header.ah_nvl,
-	    VDEV_ANYRAID_HEADER_CHECKPOINT, &var->vd_checkpoint_region);
+	    VDEV_ANYRAID_HEADER_CHECKPOINT, &var->vd_checkpoint_tile);
 
 	/*
-	 * Because the region map is 64 MiB and the maximum IO size is 16MiB,
+	 * Because the tile map is 64 MiB and the maximum IO size is 16MiB,
 	 * we may need to issue up to 4 reads to read in the whole thing.
 	 * Similarly, when processing the mapping, we need to iterate across
 	 * the 4 separate buffers.
@@ -512,7 +512,7 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 	}
 	free_header(&header, header_size);
 
-	uint32_t map = -1, cur_region = 0;
+	uint32_t map = -1, cur_tile = 0;
 	/*
 	 * For now, all entries are the size of a uint32_t. If that
 	 * ever changes, the logic here needs to be altered to work for
@@ -520,11 +520,11 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 	 */
 	uint32_t size = sizeof (anyraid_map_loc_entry_t);
 	uint8_t *map_buf = NULL;
-	uint8_t par_cnt = 0;
-	anyraid_region_t *ar = NULL;
+	uint8_t pat_cnt = 0;
+	anyraid_tile_t *ar = NULL;
 	for (uint32_t off = 0; off < map_length; off += size) {
-		if (checkpoint_rb && cur_region > var->vd_checkpoint_region &&
-		    par_cnt == 0)
+		if (checkpoint_rb && cur_tile > var->vd_checkpoint_tile &&
+		    pat_cnt == 0)
 			break;
 
 		int next_map = off / SPA_MAXBLOCKSIZE;
@@ -545,15 +545,15 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 			case AMET_SKIP: {
 				anyraid_map_skip_entry_t *amse =
 				    &entry->ame_u.ame_amse;
-				ASSERT0(par_cnt);
-				cur_region += amse_get_region_id(amse);
+				ASSERT0(pat_cnt);
+				cur_tile += amse_get_tile_id(amse);
 				break;
 			}
 			case AMET_LOC: {
 				anyraid_map_loc_entry_t *amle =
 				    &entry->ame_u.ame_amle;
-				create_region_entry(var, amle, &par_cnt, &ar,
-				    &cur_region);
+				create_tile_entry(var, amle, &pat_cnt, &ar,
+				    &cur_tile);
 				break;
 			}
 			default:
@@ -563,13 +563,13 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 	if (map_buf)
 		abd_return_buf(map_abds[map], map_buf, SPA_MAXBLOCKSIZE);
 
-	var->vd_region_size = region_size;
+	var->vd_tile_size = tile_size;
 
 	for (; i >= 0; i--)
 		abd_free(map_abds[i]);
 
 	/*
-	 * Now that we have the region map read in, we have to reopen the
+	 * Now that we have the tile map read in, we have to reopen the
 	 * children to properly set and handle the min_asize
 	 */
 	for (; i < vd->vdev_children; i++) {
@@ -598,7 +598,7 @@ anyraid_open_existing(vdev_t *vd, uint64_t child)
 }
 
 /*
- * When creating a new anyraid vdev, this function calculates the region size
+ * When creating a new anyraid vdev, this function calculates the tile size
  * to use. We take (by default) 1/64th of the size of the smallest disk or 16
  * GiB, whichever is larger.
  */
@@ -614,7 +614,7 @@ anyraid_calculate_size(vdev_t *vd)
 	}
 
 	uint64_t disk_shift = anyraid_disk_shift;
-	uint64_t min_size = zfs_anyraid_min_region_size;
+	uint64_t min_size = zfs_anyraid_min_tile_size;
 	if (smallest_disk_size < 1 << disk_shift ||
 	    smallest_disk_size < min_size) {
 		return (SET_ERROR(ENOSPC));
@@ -622,21 +622,21 @@ anyraid_calculate_size(vdev_t *vd)
 
 
 	ASSERT3U(smallest_disk_size, !=, UINT64_MAX);
-	uint64_t region_size = smallest_disk_size >> disk_shift;
-	region_size = MAX(region_size, min_size);
-	var->vd_region_size = 1ULL << (highbit64(region_size - 1));
+	uint64_t tile_size = smallest_disk_size >> disk_shift;
+	tile_size = MAX(tile_size, min_size);
+	var->vd_tile_size = 1ULL << (highbit64(tile_size - 1));
 
 	/*
-	 * Later, we're going to cap the metaslab size at the region
-	 * size, so we need a region to hold at least enough to store a
+	 * Later, we're going to cap the metaslab size at the tile
+	 * size, so we need a tile to hold at least enough to store a
 	 * max-size block, or we'll assert in that code.
 	 */
-	if (var->vd_region_size <= SPA_MAXBLOCKSIZE)
+	if (var->vd_tile_size <= SPA_MAXBLOCKSIZE)
 		return (SET_ERROR(ENOSPC));
 	return (0);
 }
 
-struct region_count {
+struct tile_count {
 	avl_node_t node;
 	int disk;
 	int remaining;
@@ -645,8 +645,8 @@ struct region_count {
 static int
 rc_compar(const void *a, const void *b)
 {
-	const struct region_count *ra = a;
-	const struct region_count *rb = b;
+	const struct tile_count *ra = a;
+	const struct tile_count *rb = b;
 
 	int cmp = TREE_CMP(rb->remaining, ra->remaining);
 	if (cmp != 0)
@@ -662,50 +662,50 @@ rc_compar(const void *a, const void *b)
  * variant.
  */
 static uint64_t
-calculate_asize(vdev_t *vd, uint64_t *num_regions)
+calculate_asize(vdev_t *vd, uint64_t *num_tiles)
 {
 	vdev_anyraid_t *var = vd->vdev_tsd;
 
 	if (var->vd_nparity == 0) {
 		uint64_t count = 0;
 		for (int c = 0; c < vd->vdev_children; c++) {
-			count += num_regions[c];
+			count += num_tiles[c];
 		}
-		return (count * var->vd_region_size);
+		return (count * var->vd_tile_size);
 	}
 
 	/*
-	 * Sort the disks by the number of additional regions they can store.
+	 * Sort the disks by the number of additional tiles they can store.
 	 */
 	avl_tree_t t;
-	avl_create(&t, rc_compar, sizeof (struct region_count),
-	    offsetof(struct region_count, node));
+	avl_create(&t, rc_compar, sizeof (struct tile_count),
+	    offsetof(struct tile_count, node));
 	for (int c = 0; c < vd->vdev_children; c++) {
-		if (num_regions[c] == 0) {
+		if (num_tiles[c] == 0) {
 			ASSERT(vd->vdev_child[c]->vdev_open_error);
 			continue;
 		}
-		struct region_count *rc = kmem_alloc(sizeof (*rc), KM_SLEEP);
+		struct tile_count *rc = kmem_alloc(sizeof (*rc), KM_SLEEP);
 		rc->disk = c;
-		rc->remaining = num_regions[c] -
+		rc->remaining = num_tiles[c] -
 		    var->vd_children[c]->van_next_offset;
 		avl_add(&t, rc);
 	}
 
 	uint32_t map_width = var->vd_nparity + 1;
-	uint64_t count = avl_numnodes(&var->vd_region_map);
-	struct region_count **cur = kmem_alloc(sizeof (*cur) * map_width,
+	uint64_t count = avl_numnodes(&var->vd_tile_map);
+	struct tile_count **cur = kmem_alloc(sizeof (*cur) * map_width,
 	    KM_SLEEP);
 	for (;;) {
 		/* Grab the nparity + 1 children with the most free capacity */
 		for (int c = 0; c < map_width; c++) {
-			struct region_count *rc = avl_first(&t);
+			struct tile_count *rc = avl_first(&t);
 			ASSERT(rc);
 			cur[c] = rc;
 			avl_remove(&t, rc);
 		}
-		struct region_count *rc = cur[map_width - 1];
-		struct region_count *next = avl_first(&t);
+		struct tile_count *rc = cur[map_width - 1];
+		struct tile_count *next = avl_first(&t);
 		uint64_t next_rem = next == NULL ? 0 : next->remaining;
 		ASSERT3U(next_rem, <=, rc->remaining);
 		/* If one of the top N + 1 has no capacity left, we're done */
@@ -717,7 +717,7 @@ calculate_asize(vdev_t *vd, uint64_t *num_regions)
 		 * lowest free capacity of the ones we've selected has N more
 		 * capacity than the next child, the next N iterations would
 		 * all select the same children. So to save time, we add N
-		 * regions right now and reduce our iteration count.
+		 * tiles right now and reduce our iteration count.
 		 */
 		uint64_t this_iter = MAX(1, rc->remaining - next_rem);
 		count += this_iter;
@@ -733,12 +733,12 @@ calculate_asize(vdev_t *vd, uint64_t *num_regions)
 		kmem_free(cur[c], sizeof (*cur));
 	kmem_free(cur, sizeof (*cur) * map_width);
 	void *cookie = NULL;
-	struct region_count *node;
+	struct tile_count *node;
 
 	while ((node = avl_destroy_nodes(&t, &cookie)) != NULL)
 		kmem_free(node, sizeof (*node));
 	avl_destroy(&t);
-	return (count * var->vd_region_size);
+	return (count * var->vd_tile_size);
 }
 
 static int
@@ -791,11 +791,11 @@ vdev_anyraid_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 	}
 
 	/*
-	 * Calculate the number of regions each child could fit, then use that
+	 * Calculate the number of tiles each child could fit, then use that
 	 * to calculate the asize and min_asize.
 	 */
-	uint64_t *num_regions = kmem_zalloc(vd->vdev_children *
-	    sizeof (*num_regions), KM_SLEEP);
+	uint64_t *num_tiles = kmem_zalloc(vd->vdev_children *
+	    sizeof (*num_tiles), KM_SLEEP);
 	for (int c = 0; c < vd->vdev_children; c++) {
 		vdev_t *cvd = vd->vdev_child[c];
 
@@ -806,12 +806,12 @@ vdev_anyraid_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 
 		uint64_t casize = cvd->vdev_asize -
 		    VDEV_ANYRAID_TOTAL_MAP_SIZE(cvd->vdev_ashift);
-		num_regions[c] = casize / var->vd_region_size;
+		num_tiles[c] = casize / var->vd_tile_size;
 		avl_remove(&var->vd_children_tree, var->vd_children[c]);
-		var->vd_children[c]->van_capacity = num_regions[c];
+		var->vd_children[c]->van_capacity = num_tiles[c];
 		avl_add(&var->vd_children_tree, var->vd_children[c]);
 	}
-	*asize = calculate_asize(vd, num_regions);
+	*asize = calculate_asize(vd, num_tiles);
 
 	for (int c = 0; c < vd->vdev_children; c++) {
 		vdev_t *cvd = vd->vdev_child[c];
@@ -821,9 +821,9 @@ vdev_anyraid_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 
 		uint64_t cmasize = cvd->vdev_max_asize -
 		    VDEV_ANYRAID_TOTAL_MAP_SIZE(cvd->vdev_ashift);
-		num_regions[c] = cmasize / var->vd_region_size;
+		num_tiles[c] = cmasize / var->vd_tile_size;
 	}
-	*max_asize = calculate_asize(vd, num_regions);
+	*max_asize = calculate_asize(vd, num_tiles);
 
 	for (int c = 0; c < vd->vdev_children; c++) {
 		vdev_t *cvd = vd->vdev_child[c];
@@ -839,15 +839,15 @@ vdev_anyraid_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 }
 
 /*
- * We cap the metaslab size at the region size. This prevents us from having to
- * split IOs across multiple regions, which would be complex extra logic for
+ * We cap the metaslab size at the tile size. This prevents us from having to
+ * split IOs across multiple tiles, which would be complex extra logic for
  * little gain.
  */
 static void
 vdev_anyraid_metaslab_size(vdev_t *vd, uint64_t *shiftp)
 {
 	vdev_anyraid_t *var = vd->vdev_tsd;
-	*shiftp = MIN(*shiftp, highbit64(var->vd_region_size) - 1);
+	*shiftp = MIN(*shiftp, highbit64(var->vd_tile_size) - 1);
 }
 
 static void
@@ -868,25 +868,25 @@ vdev_anyraid_close(vdev_t *vd)
  * logic.
  */
 static void
-vdev_anyraid_mirror_start(zio_t *zio, anyraid_region_t *region)
+vdev_anyraid_mirror_start(zio_t *zio, anyraid_tile_t *tile)
 {
 	vdev_t *vd = zio->io_vd;
 	vdev_anyraid_t *var = vd->vdev_tsd;
 	mirror_map_t *mm = vdev_mirror_map_alloc(var->vd_nparity + 1, B_FALSE,
 	    B_FALSE);
-	uint64_t rsize = var->vd_region_size;
+	uint64_t rsize = var->vd_tile_size;
 
-	anyraid_region_node_t *arn = list_head(&region->ar_list);
+	anyraid_tile_node_t *arn = list_head(&tile->at_list);
 	for (int c = 0; c < mm->mm_children; c++) {
 		ASSERT(arn);
 		mirror_child_t *mc = &mm->mm_child[c];
-		mc->mc_vd = vd->vdev_child[arn->arn_disk];
+		mc->mc_vd = vd->vdev_child[arn->atn_disk];
 		mc->mc_offset = VDEV_ANYRAID_TOTAL_MAP_SIZE(vd->vdev_ashift) +
-		    arn->arn_offset * rsize + zio->io_offset % rsize;
+		    arn->atn_offset * rsize + zio->io_offset % rsize;
 		ASSERT3U(mc->mc_offset, <, mc->mc_vd->vdev_psize -
 		    VDEV_LABEL_END_SIZE);
 		mm->mm_rebuilding = mc->mc_rebuilding = B_FALSE;
-		arn = list_next(&region->ar_list, arn);
+		arn = list_next(&tile->at_list, arn);
 	}
 	ASSERT(arn == NULL);
 
@@ -925,35 +925,35 @@ vdev_anyraid_io_start(zio_t *zio)
 {
 	vdev_t *vd = zio->io_vd;
 	vdev_anyraid_t *var = vd->vdev_tsd;
-	uint64_t rsize = var->vd_region_size;
+	uint64_t rsize = var->vd_tile_size;
 
-	uint64_t start_region_id = zio->io_offset / rsize;
-	anyraid_region_t search;
-	search.ar_region_id = start_region_id;
+	uint64_t start_tile_id = zio->io_offset / rsize;
+	anyraid_tile_t search;
+	search.at_tile_id = start_tile_id;
 	avl_index_t where;
 	rw_enter(&var->vd_lock, RW_READER);
-	anyraid_region_t *region = avl_find(&var->vd_region_map, &search,
+	anyraid_tile_t *tile = avl_find(&var->vd_tile_map, &search,
 	    &where);
 
 	/*
 	 * If we're doing an I/O somewhere that hasn't been allocated yet, we
-	 * may need to allocate a new region. Upgrade to a write lock so we can
+	 * may need to allocate a new tile. Upgrade to a write lock so we can
 	 * safely modify the data structure, and then check if someone else
 	 * beat us to it.
 	 */
-	if (region == NULL) {
+	if (tile == NULL) {
 		rw_exit(&var->vd_lock);
 		rw_enter(&var->vd_lock, RW_WRITER);
-		region = avl_find(&var->vd_region_map, &search, &where);
+		tile = avl_find(&var->vd_tile_map, &search, &where);
 	}
-	if (region == NULL) {
+	if (tile == NULL) {
 		ASSERT3U(zio->io_type, ==, ZIO_TYPE_WRITE);
-		zfs_dbgmsg("Allocating region %llu for zio %px",
-		    (u_longlong_t)start_region_id, zio);
-		region = kmem_alloc(sizeof (*region), KM_SLEEP);
-		region->ar_region_id = start_region_id;
-		list_create(&region->ar_list, sizeof (anyraid_region_node_t),
-		    offsetof(anyraid_region_node_t, arn_node));
+		zfs_dbgmsg("Allocating tile %llu for zio %px",
+		    (u_longlong_t)start_tile_id, zio);
+		tile = kmem_alloc(sizeof (*tile), KM_SLEEP);
+		tile->at_tile_id = start_tile_id;
+		list_create(&tile->at_list, sizeof (anyraid_tile_node_t),
+		    offsetof(anyraid_tile_node_t, atn_node));
 
 		uint_t width = var->vd_nparity + 1;
 		vdev_anyraid_node_t **vans = kmem_alloc(sizeof (*vans) * width,
@@ -962,33 +962,33 @@ vdev_anyraid_io_start(zio_t *zio)
 			vans[i] = avl_first(&var->vd_children_tree);
 			avl_remove(&var->vd_children_tree, vans[i]);
 
-			anyraid_region_node_t *arn =
+			anyraid_tile_node_t *arn =
 			    kmem_alloc(sizeof (*arn), KM_SLEEP);
-			arn->arn_disk = vans[i]->van_id;
-			arn->arn_offset =
+			arn->atn_disk = vans[i]->van_id;
+			arn->atn_offset =
 			    vans[i]->van_next_offset++;
-			list_insert_tail(&region->ar_list, arn);
+			list_insert_tail(&tile->at_list, arn);
 		}
 		for (int i = 0; i < width; i++)
 			avl_add(&var->vd_children_tree, vans[i]);
 
 		kmem_free(vans, sizeof (*vans) * width);
-		avl_insert(&var->vd_region_map, region, where);
+		avl_insert(&var->vd_tile_map, tile, where);
 	}
 	rw_exit(&var->vd_lock);
 
 	ASSERT3U(zio->io_offset % rsize + zio->io_size, <=,
-	    var->vd_region_size);
+	    var->vd_tile_size);
 
 	if (var->vd_nparity > 0) {
-		vdev_anyraid_mirror_start(zio, region);
+		vdev_anyraid_mirror_start(zio, tile);
 		zio_execute(zio);
 		return;
 	}
 
-	anyraid_region_node_t *arn = list_head(&region->ar_list);
-	vdev_t *cvd = vd->vdev_child[arn->arn_disk];
-	uint64_t child_offset = arn->arn_offset * rsize +
+	anyraid_tile_node_t *arn = list_head(&tile->at_list);
+	vdev_t *cvd = vd->vdev_child[arn->atn_disk];
+	uint64_t child_offset = arn->atn_offset * rsize +
 	    zio->io_offset % rsize;
 	child_offset += VDEV_ANYRAID_TOTAL_MAP_SIZE(vd->vdev_ashift);
 
@@ -1045,19 +1045,19 @@ vdev_anyraid_need_resilver(vdev_t *vd, const dva_t *dva, size_t psize,
 	if (!vdev_dtl_contains(vd, DTL_PARTIAL, phys_birth, 1))
 		return (B_FALSE);
 
-	uint64_t start_region_id = DVA_GET_OFFSET(dva) / var->vd_region_size;
-	anyraid_region_t search;
-	search.ar_region_id = start_region_id;
+	uint64_t start_tile_id = DVA_GET_OFFSET(dva) / var->vd_tile_size;
+	anyraid_tile_t search;
+	search.at_tile_id = start_tile_id;
 	avl_index_t where;
 	rw_enter(&var->vd_lock, RW_READER);
-	anyraid_region_t *region = avl_find(&var->vd_region_map, &search,
+	anyraid_tile_t *tile = avl_find(&var->vd_tile_map, &search,
 	    &where);
 	rw_exit(&var->vd_lock);
-	ASSERT(region);
+	ASSERT(tile);
 
-	for (anyraid_region_node_t *arn = list_head(&region->ar_list);
-	    arn != NULL; arn = list_next(&region->ar_list, arn)) {
-		vdev_t *cvd = vd->vdev_child[arn->arn_disk];
+	for (anyraid_tile_node_t *arn = list_head(&tile->at_list);
+	    arn != NULL; arn = list_next(&tile->at_list, arn)) {
+		vdev_t *cvd = vd->vdev_child[arn->atn_disk];
 
 		if (!vdev_dtl_empty(cvd, DTL_PARTIAL))
 			return (B_TRUE);
@@ -1080,33 +1080,33 @@ vdev_anyraid_xlate(vdev_t *cvd, const zfs_range_seg64_t *logical_rs,
 	vdev_t *anyraidvd = cvd->vdev_parent;
 	ASSERT3P(anyraidvd->vdev_ops, ==, &vdev_anyraid_ops);
 	vdev_anyraid_t *var = anyraidvd->vdev_tsd;
-	uint64_t rsize = var->vd_region_size;
+	uint64_t rsize = var->vd_tile_size;
 
-	uint64_t start_region_id = logical_rs->rs_start / rsize;
-	ASSERT3U(start_region_id, ==, (logical_rs->rs_end - 1) / rsize);
-	anyraid_region_t search;
-	search.ar_region_id = start_region_id;
+	uint64_t start_tile_id = logical_rs->rs_start / rsize;
+	ASSERT3U(start_tile_id, ==, (logical_rs->rs_end - 1) / rsize);
+	anyraid_tile_t search;
+	search.at_tile_id = start_tile_id;
 	avl_index_t where;
 	rw_enter(&var->vd_lock, RW_READER);
-	anyraid_region_t *region = avl_find(&var->vd_region_map, &search,
+	anyraid_tile_t *tile = avl_find(&var->vd_tile_map, &search,
 	    &where);
 	rw_exit(&var->vd_lock);
-	// This region doesn't exist yet
-	if (region == NULL) {
+	// This tile doesn't exist yet
+	if (tile == NULL) {
 		physical_rs->rs_start = physical_rs->rs_end = 0;
 		return;
 	}
-	anyraid_region_node_t *arn = list_head(&region->ar_list);
-	for (; arn != NULL; arn = list_next(&region->ar_list, arn))
-		if (anyraidvd->vdev_child[arn->arn_disk] == cvd)
+	anyraid_tile_node_t *arn = list_head(&tile->at_list);
+	for (; arn != NULL; arn = list_next(&tile->at_list, arn))
+		if (anyraidvd->vdev_child[arn->atn_disk] == cvd)
 			break;
-	// The region exists, but isn't stored on this child
+	// The tile exists, but isn't stored on this child
 	if (arn == NULL) {
 		physical_rs->rs_start = physical_rs->rs_end = 0;
 		return;
 	}
 
-	uint64_t child_offset = arn->arn_offset * rsize +
+	uint64_t child_offset = arn->atn_offset * rsize +
 	    logical_rs->rs_start % rsize;
 	child_offset += VDEV_ANYRAID_TOTAL_MAP_SIZE(anyraidvd->vdev_ashift);
 	uint64_t size = logical_rs->rs_end - logical_rs->rs_start;
@@ -1131,26 +1131,26 @@ vdev_anyraid_ndisks(vdev_t *vd)
 }
 
 /*
- * Functions related to syncing out the region map each TXG.
+ * Functions related to syncing out the tile map each TXG.
  */
 static boolean_t
-map_write_loc_entry(anyraid_region_node_t *arn, void *buf, uint32_t *offset)
+map_write_loc_entry(anyraid_tile_node_t *arn, void *buf, uint32_t *offset)
 {
 	anyraid_map_loc_entry_t *entry = (void *)((char *)buf + *offset);
 	entry->amle_type = AMET_LOC;
-	entry->amle_disk = arn->arn_disk;
-	entry->amle_offset = arn->arn_offset;
+	entry->amle_disk = arn->atn_disk;
+	entry->amle_offset = arn->atn_offset;
 	*offset += sizeof (*entry);
 	return (*offset == SPA_MAXBLOCKSIZE);
 }
 
 static boolean_t
-map_write_skip_entry(uint32_t region, void *buf, uint32_t *offset,
+map_write_skip_entry(uint32_t tile, void *buf, uint32_t *offset,
     uint32_t prev_id)
 {
 	anyraid_map_skip_entry_t *entry = (void *)((char *)buf + *offset);
 	amse_set_type(entry);
-	amse_set_region_id(entry, region - prev_id - 1);
+	amse_set_tile_id(entry, tile - prev_id - 1);
 	*offset += sizeof (*entry);
 	return (*offset == SPA_MAXBLOCKSIZE);
 }
@@ -1207,27 +1207,27 @@ vdev_anyraid_write_map_sync(vdev_t *vd, zio_t *pio, uint64_t txg,
 	void *buf = abd_borrow_buf(map_abd, SPA_MAXBLOCKSIZE);
 
 	rw_enter(&var->vd_lock, RW_READER);
-	anyraid_region_t *cur = avl_first(&var->vd_region_map);
-	anyraid_region_node_t *curn = cur != NULL ?
-	    list_head(&cur->ar_list) : NULL;
+	anyraid_tile_t *cur = avl_first(&var->vd_tile_map);
+	anyraid_tile_node_t *curn = cur != NULL ?
+	    list_head(&cur->at_list) : NULL;
 	uint32_t buf_offset = 0, prev_id = UINT32_MAX;
 	zio_t *zio = zio_root(spa, NULL, NULL, flags);
-	/* Write out each sub-region in turn */
+	/* Write out each sub-tile in turn */
 	while (cur) {
 		if (status == VDEV_CONFIG_REWINDING_CHECKPOINT &&
-		    cur->ar_region_id > var->vd_checkpoint_region)
+		    cur->at_tile_id > var->vd_checkpoint_tile)
 			break;
 
-		anyraid_region_t *next = AVL_NEXT(&var->vd_region_map, cur);
-		IMPLY(prev_id != UINT32_MAX, cur->ar_region_id >= prev_id);
+		anyraid_tile_t *next = AVL_NEXT(&var->vd_tile_map, cur);
+		IMPLY(prev_id != UINT32_MAX, cur->at_tile_id >= prev_id);
 		/*
 		 * Determine if we need to write a skip entry before the
 		 * current one.
 		 */
 		boolean_t skip =
-		    (prev_id == UINT32_MAX && cur->ar_region_id != 0) ||
-		    (prev_id != UINT32_MAX && cur->ar_region_id > prev_id + 1);
-		if ((skip && map_write_skip_entry(cur->ar_region_id, buf,
+		    (prev_id == UINT32_MAX && cur->at_tile_id != 0) ||
+		    (prev_id != UINT32_MAX && cur->at_tile_id > prev_id + 1);
+		if ((skip && map_write_skip_entry(cur->at_tile_id, buf,
 		    &buf_offset, prev_id)) ||
 		    (!skip && map_write_loc_entry(curn, buf, &buf_offset))) {
 			// Let the final write handle it
@@ -1244,28 +1244,28 @@ vdev_anyraid_write_map_sync(vdev_t *vd, zio_t *pio, uint64_t txg,
 			buf = abd_borrow_buf(map_abd, SPA_MAXBLOCKSIZE);
 			buf_offset = 0;
 		}
-		prev_id = cur->ar_region_id;
+		prev_id = cur->at_tile_id;
 		/*
-		 * Advance the current sub-region; if it moves us past the end
-		 * of the current list of sub-regions, start the next region.
+		 * Advance the current sub-tile; if it moves us past the end
+		 * of the current list of sub-tiles, start the next tile.
 		 */
 		if (!skip) {
-			curn = list_next(&cur->ar_list, curn);
+			curn = list_next(&cur->at_list, curn);
 			if (curn == NULL) {
 				cur = next;
 				curn = cur != NULL ?
-				    list_head(&cur->ar_list) : NULL;
+				    list_head(&cur->at_list) : NULL;
 			}
 		}
 	}
 
 	if (status == VDEV_CONFIG_DISCARDING_CHECKPOINT ||
 	    status == VDEV_CONFIG_REWINDING_CHECKPOINT) {
-		var->vd_checkpoint_region = UINT32_MAX;
+		var->vd_checkpoint_tile = UINT32_MAX;
 	} else if (status == VDEV_CONFIG_CREATING_CHECKPOINT) {
-		anyraid_region_t *ar = avl_last(&var->vd_region_map);
+		anyraid_tile_t *ar = avl_last(&var->vd_tile_map);
 		ASSERT(ar);
-		var->vd_checkpoint_region = ar->ar_region_id;
+		var->vd_checkpoint_tile = ar->at_tile_id;
 	}
 	rw_exit(&var->vd_lock);
 
@@ -1288,14 +1288,14 @@ vdev_anyraid_write_map_sync(vdev_t *vd, zio_t *pio, uint64_t txg,
 	fnvlist_add_uint8(header, VDEV_ANYRAID_HEADER_DISK, disk_id);
 	fnvlist_add_uint64(header, VDEV_ANYRAID_HEADER_TXG, txg);
 	fnvlist_add_uint64(header, VDEV_ANYRAID_HEADER_GUID, spa_guid(spa));
-	fnvlist_add_uint64(header, VDEV_ANYRAID_HEADER_REGION_SIZE,
-	    var->vd_region_size);
+	fnvlist_add_uint64(header, VDEV_ANYRAID_HEADER_TILE_SIZE,
+	    var->vd_tile_size);
 	fnvlist_add_uint32(header, VDEV_ANYRAID_HEADER_LENGTH,
 	    written * SPA_MAXBLOCKSIZE + buf_offset);
 
-	if (var->vd_checkpoint_region != UINT32_MAX) {
+	if (var->vd_checkpoint_tile != UINT32_MAX) {
 		fnvlist_add_uint32(header, VDEV_ANYRAID_HEADER_CHECKPOINT,
-		    var->vd_checkpoint_region);
+		    var->vd_checkpoint_tile);
 	}
 	size_t packed_size;
 	char *packed = fnvlist_pack(header, &packed_size);
@@ -1318,13 +1318,13 @@ vdev_anyraid_min_asize(vdev_t *pvd, vdev_t *cvd)
 	ASSERT3P(pvd->vdev_ops, ==, &vdev_anyraid_ops);
 	ASSERT3U(spa_config_held(pvd->vdev_spa, SCL_ALL, RW_READER), !=, 0);
 	vdev_anyraid_t *var = pvd->vdev_tsd;
-	if (var->vd_region_size == 0)
+	if (var->vd_tile_size == 0)
 		return (VDEV_ANYRAID_TOTAL_MAP_SIZE(cvd->vdev_ashift));
 
 	rw_enter(&var->vd_lock, RW_READER);
 	uint64_t size = VDEV_ANYRAID_TOTAL_MAP_SIZE(cvd->vdev_ashift) +
 	    var->vd_children[cvd->vdev_id]->van_next_offset *
-	    var->vd_region_size;
+	    var->vd_tile_size;
 	rw_exit(&var->vd_lock);
 	return (size);
 }
@@ -1338,7 +1338,7 @@ vdev_anyraid_min_newsize(vdev_t *vd, uint64_t ashift)
 {
 	vdev_anyraid_t *var = vd->vdev_tsd;
 	return (VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE +
-	    VDEV_ANYRAID_TOTAL_MAP_SIZE(ashift) + var->vd_region_size);
+	    VDEV_ANYRAID_TOTAL_MAP_SIZE(ashift) + var->vd_tile_size);
 }
 
 void
@@ -1357,7 +1357,7 @@ vdev_anyraid_expand(vdev_t *tvd, vdev_t *newvd)
 	newchild->van_next_offset = 0;
 	newchild->van_capacity = (newvd->vdev_asize -
 	    VDEV_ANYRAID_TOTAL_MAP_SIZE(newvd->vdev_ashift)) /
-	    var->vd_region_size;
+	    var->vd_tile_size;
 	rw_enter(&var->vd_lock, RW_WRITER);
 	memcpy(nc, var->vd_children, old_children * sizeof (*nc));
 	kmem_free(var->vd_children, old_children * sizeof (*nc));
@@ -1372,7 +1372,7 @@ vdev_anyraid_expand(vdev_t *tvd, vdev_t *newvd)
  * given the following constraints.  An anyraid chunk may not:
  *
  * - Exceed the maximum allowed block size (SPA_MAXBLOCKSIZE), or
- * - Span anyraid regions
+ * - Span anyraid tiles
  */
 static uint64_t
 vdev_anyraid_rebuild_asize(vdev_t *vd, uint64_t start, uint64_t asize,
@@ -1384,9 +1384,9 @@ vdev_anyraid_rebuild_asize(vdev_t *vd, uint64_t start, uint64_t asize,
 	uint64_t psize = MIN(P2ROUNDUP(max_segment, 1 << vd->vdev_ashift),
 	    SPA_MAXBLOCKSIZE);
 
-	if (start / var->vd_region_size !=
-	    (start + psize) / var->vd_region_size) {
-		psize = P2ROUNDUP(start, var->vd_region_size) - start;
+	if (start / var->vd_tile_size !=
+	    (start + psize) / var->vd_tile_size) {
+		psize = P2ROUNDUP(start, var->vd_tile_size) - start;
 	}
 
 	return (MIN(asize, vdev_psize_to_asize(vd, psize)));
@@ -1420,5 +1420,5 @@ vdev_ops_t vdev_anyraid_ops = {
 };
 
 
-ZFS_MODULE_PARAM(zfs_anyraid, zfs_anyraid_, min_region_size, U64, ZMOD_RW,
-	"Minimum region size for anyraid");
+ZFS_MODULE_PARAM(zfs_anyraid, zfs_anyraid_, min_tile_size, U64, ZMOD_RW,
+	"Minimum tile size for anyraid");
