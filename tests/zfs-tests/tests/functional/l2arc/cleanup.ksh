@@ -28,5 +28,7 @@ if poolexists $TESTPOOL ; then
 fi
 
 log_must rm -rf $VDIR
+log_must restore_tunable ARC_MIN
+log_must restore_tunable ARC_MAX
 
 log_pass

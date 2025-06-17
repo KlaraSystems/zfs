@@ -64,7 +64,7 @@
  * if feature@block_cloning is enabled, using functions and system calls that
  * attempt to clone blocks will act as though the feature is disabled.
  */
-int zfs_bclone_enabled = 1;
+int zfs_bclone_enabled = 0;
 
 /*
  * When set zfs_clone_range() waits for dirty data to be written to disk.
@@ -105,7 +105,7 @@ zfs_fsync(znode_t *zp, int syncflag, cred_t *cr)
 		if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
 			return (error);
 		atomic_inc_32(&zp->z_sync_writes_cnt);
-		zil_commit(zfsvfs->z_log, zp->z_id);
+		error = zil_commit(zfsvfs->z_log, zp->z_id);
 		atomic_dec_32(&zp->z_sync_writes_cnt);
 		zfs_exit(zfsvfs, FTAG);
 	}
@@ -357,8 +357,13 @@ zfs_read(struct znode *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	frsync = !!(ioflag & FRSYNC);
 #endif
 	if (zfsvfs->z_log &&
-	    (frsync || zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS))
-		zil_commit(zfsvfs->z_log, zp->z_id);
+	    (frsync || zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)) {
+		error = zil_commit(zfsvfs->z_log, zp->z_id);
+		if (error != 0) {
+			zfs_exit(zfsvfs, FTAG);
+			return (error);
+		}
+	}
 
 	/*
 	 * Lock the range against changes.
@@ -1040,8 +1045,13 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 		return (error);
 	}
 
-	if (commit)
-		zil_commit(zilog, zp->z_id);
+	if (commit) {
+		error = zil_commit(zilog, zp->z_id);
+		if (error != 0) {
+			zfs_exit(zfsvfs, FTAG);
+			return (error);
+		}
+	}
 
 	int64_t nwritten = start_resid - zfs_uio_resid(uio);
 	dataset_kstats_update_write_kstats(&zfsvfs->z_kstat, nwritten);
@@ -1078,8 +1088,8 @@ zfs_setsecattr(znode_t *zp, vsecattr_t *vsecp, int flag, cred_t *cr)
 	zilog = zfsvfs->z_log;
 	error = zfs_setacl(zp, vsecp, skipaclchk, cr);
 
-	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
-		zil_commit(zilog, 0);
+	if (error == 0 && zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+		error = zil_commit(zilog, 0);
 
 	zfs_exit(zfsvfs, FTAG);
 	return (error);
@@ -1755,7 +1765,7 @@ unlock:
 		ZFS_ACCESSTIME_STAMP(inzfsvfs, inzp);
 
 		if (outos->os_sync == ZFS_SYNC_ALWAYS) {
-			zil_commit(zilog, outzp->z_id);
+			error = zil_commit(zilog, outzp->z_id);
 		}
 
 		*inoffp += done;

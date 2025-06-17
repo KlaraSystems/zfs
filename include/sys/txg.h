@@ -66,6 +66,25 @@ typedef struct txg_list {
 	txg_node_t	*tl_head[TXG_SIZE];
 } txg_list_t;
 
+/*
+ * Wait flags for txg_wait_synced_flags(). By default (TXG_WAIT_NONE), it will
+ * wait until the wanted txg is reached, or block forever. Additional flags
+ * indicate other conditions that the caller is interested in, that will cause
+ * the wait to break and return an error code describing the condition.
+ */
+/*
+ * No special flags. Guaranteed to block forever or return 0.
+ */
+#define	TXG_WAIT_NONE		(0)
+/*
+ * If a signal arrives while waiting, abort and return EINTR.
+ */
+#define	TXG_WAIT_SIGNAL		(1 << 0)
+/*
+ * If the pool suspends while waiting, abort and return ESHUTDOWN.
+ */
+#define	TXG_WAIT_SUSPEND	(1 << 1)
+
 struct dsl_pool;
 
 extern void txg_init(struct dsl_pool *dp, uint64_t txg);
@@ -86,13 +105,21 @@ extern void txg_kick(struct dsl_pool *dp, uint64_t txg);
  * Try to make this happen as soon as possible (eg. kick off any
  * necessary syncs immediately).  If txg==0, wait for the currently open
  * txg to finish syncing.
+ * See TXG_WAIT_* above for a description of how the flags affect the wait.
+ */
+extern int txg_wait_synced_flags(struct dsl_pool *dp, uint64_t txg,
+    uint64_t flags);
+
+/*
+ * Traditional form of txg_wait_synced_flags, waits forever.
+ * Shorthand for VERIFY0(txg_wait_synced_flags(dp, TXG_WAIT_NONE))
  */
 extern void txg_wait_synced(struct dsl_pool *dp, uint64_t txg);
 
-/*
- * Wait as above. Returns true if the thread was signaled while waiting.
+/* 
+ * Wake all threads waiting in txg_wait_synced_flags() so they can reevaluate
  */
-extern boolean_t txg_wait_synced_sig(struct dsl_pool *dp, uint64_t txg);
+extern void txg_wait_kick(struct dsl_pool *dp);
 
 /*
  * Wait until the given transaction group, or one after it, is

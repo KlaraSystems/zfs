@@ -648,7 +648,7 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	if (spa->spa_root_vdev == NULL) {
 		ASSERT(ops == &vdev_root_ops);
 		spa->spa_root_vdev = vd;
-		spa->spa_load_guid = spa_generate_guid(NULL);
+		spa->spa_load_guid = spa_generate_load_guid();
 	}
 
 	if (guid == 0 && ops != &vdev_hole_ops) {
@@ -4545,6 +4545,8 @@ vdev_clear(spa_t *spa, vdev_t *vd)
 	vd->vdev_stat.vs_checksum_errors = 0;
 	vd->vdev_stat.vs_dio_verify_errors = 0;
 	vd->vdev_stat.vs_slow_ios = 0;
+	atomic_store_64(&vd->vdev_outlier_count, 0);
+	vd->vdev_read_sit_out_expire = 0;
 
 	for (int c = 0; c < vd->vdev_children; c++)
 		vdev_clear(spa, vd->vdev_child[c]);
@@ -4562,7 +4564,7 @@ vdev_clear(spa_t *spa, vdev_t *vd)
 	 * written out to disk.
 	 */
 	if (vd->vdev_faulted || vd->vdev_degraded ||
-	    !vdev_readable(vd) || !vdev_writeable(vd)) {
+	    !vdev_readable(vd) || !vdev_writeable(vd) || vd->vdev_removed) {
 		/*
 		 * When reopening in response to a clear event, it may be due to
 		 * a fmadm repair request.  In this case, if the device is
@@ -4571,8 +4573,11 @@ vdev_clear(spa_t *spa, vdev_t *vd)
 		vd->vdev_forcefault = B_TRUE;
 
 		vd->vdev_faulted = vd->vdev_degraded = 0ULL;
+		vd->vdev_fault_wanted = B_FALSE;
 		vd->vdev_cant_read = B_FALSE;
 		vd->vdev_cant_write = B_FALSE;
+		vd->vdev_remove_wanted = B_FALSE;
+		vd->vdev_removed = B_FALSE;
 		vd->vdev_stat.vs_aux = 0;
 
 		vdev_reopen(vd == rvd ? rvd : vd->vdev_top);
@@ -6382,6 +6387,19 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 				if (vd->vdev_ops == &vdev_raidz_ops) {
 					vdev_prop_add_list(outnvl, propname,
 					    NULL, vd->vdev_rz_expanding,
+					    ZPROP_SRC_NONE);
+				}
+				continue;
+			case VDEV_PROP_SIT_OUT:
+				/* Only expose this for a draid or raidz leaf */
+				if (vd->vdev_ops->vdev_op_leaf &&
+				    vd->vdev_top != NULL &&
+				    (vd->vdev_top->vdev_ops ==
+				    &vdev_raidz_ops ||
+				    vd->vdev_top->vdev_ops ==
+				    &vdev_draid_ops)) {
+					vdev_prop_add_list(outnvl, propname,
+					    NULL, vdev_sit_out_reads(vd, 0),
 					    ZPROP_SRC_NONE);
 				}
 				continue;

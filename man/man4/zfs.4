@@ -288,6 +288,15 @@ Default DDT ZAP indirect block size as a power of 2. Note that changing this
 after creating a DDT on the pool will not affect existing DDTs, only newly
 created ones.
 .
+.It Sy zfs_lockless_read_enabled Ns = Ns Sy 0 Ns | Ns 1 Pq uint
+Enables lockless traversal of kernel structures in emergencies
+when reading pool status via the
+.Pa /proc/spl/kstat/zfs/ Ns Ao Ar pool Ac Ns Pa /status_json .
+It may proceed even if required read locks are not held.
+Potential consequences, such as a kernel panic, must be considered before use.
+For instance, a debug build of a kernel will panic due to lock assertions.
+The default is 0.
+.
 .It Sy zfs_default_bs Ns = Ns Sy 9 Po 512 B Pc Pq int
 Default dnode block size as a power of 2.
 .
@@ -591,6 +600,18 @@ new format when enabling the
 .Sy head_errlog
 feature.
 The default is to convert all log entries.
+.
+.It Sy vdev_read_sit_out_secs Ns = Ns Sy 600 Ns s Po 10 min Pc Pq ulong
+When a slow disk outlier is detected it is placed in a sit out state.
+While sitting out the disk will not participate in normal reads, instead its
+data will be reconstructed as needed from parity.
+Resilver and scrub operations will always read from a disk, even if it's
+sitting out.
+Only a single disk in a RAID-Z or dRAID vdev may sit out at the same time.
+Writes will still be issued to a disk which is sitting out to maintain full
+redundancy.
+Defaults to 600 seconds and a value of zero disables slow disk outlier
+detection.
 .
 .It Sy vdev_removal_max_span Ns = Ns Sy 32768 Ns B Po 32 KiB Pc Pq uint
 During top-level vdev removal, chunks of data are copied from the vdev

@@ -31,6 +31,7 @@ kernel_sys_HEADERS = \
 	%D%/zfs/sys/trace_dnode.h \
 	%D%/zfs/sys/trace_multilist.h \
 	%D%/zfs/sys/trace_rrwlock.h \
+	%D%/zfs/sys/trace_spa_taskqs.h \
 	%D%/zfs/sys/trace_txg.h \
 	%D%/zfs/sys/trace_vdev.h \
 	%D%/zfs/sys/trace_zfs.h \

@@ -173,15 +173,6 @@ typedef struct itx_async_node {
 	avl_node_t	ia_node;	/* AVL tree linkage */
 } itx_async_node_t;
 
-/*
- * Vdev flushing: during a zil_commit(), we build up an AVL tree of the vdevs
- * we've touched so we know which ones need a write cache flush at the end.
- */
-typedef struct zil_vdev_node {
-	uint64_t	zv_vdev;	/* vdev to be flushed */
-	avl_node_t	zv_node;	/* AVL tree linkage */
-} zil_vdev_node_t;
-
 #define	ZIL_BURSTS 8
 
 /*
@@ -221,6 +212,7 @@ struct zilog {
 	uint64_t	zl_cur_left;	/* current burst remaining size */
 	uint64_t	zl_cur_max;	/* biggest record in current burst */
 	list_t		zl_lwb_list;	/* in-flight log write list */
+	list_t		zl_lwb_crash_list; /* log writes in-flight at crash */
 	avl_tree_t	zl_bp_tree;	/* track bps during log parse */
 	clock_t		zl_replay_time;	/* lbolt of when replay started */
 	uint64_t	zl_replay_blks;	/* number of log blocks replayed */
@@ -244,6 +236,9 @@ struct zilog {
 	 * (see zil_max_copied_data()).
 	 */
 	uint64_t	zl_max_block_size;
+
+	/* After crash, txg to restart zil */
+	uint64_t	zl_restart_txg;
 
 	/* Pointer for per dataset zil sums */
 	zil_sums_t *zl_sums;

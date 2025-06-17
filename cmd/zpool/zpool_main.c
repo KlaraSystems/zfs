@@ -77,6 +77,8 @@
 #include "zfs_comutil.h"
 #include "zfeature_common.h"
 #include "zfs_valstr.h"
+#include "json.h"
+#include "literals.h"
 
 #include "statcommon.h"
 
@@ -310,41 +312,6 @@ static const char *checkpoint_state_str[] = {
 	"DISCARDING"
 };
 
-static const char *vdev_state_str[] = {
-	"UNKNOWN",
-	"CLOSED",
-	"OFFLINE",
-	"REMOVED",
-	"CANT_OPEN",
-	"FAULTED",
-	"DEGRADED",
-	"ONLINE"
-};
-
-static const char *vdev_aux_str[] = {
-	"NONE",
-	"OPEN_FAILED",
-	"CORRUPT_DATA",
-	"NO_REPLICAS",
-	"BAD_GUID_SUM",
-	"TOO_SMALL",
-	"BAD_LABEL",
-	"VERSION_NEWER",
-	"VERSION_OLDER",
-	"UNSUP_FEAT",
-	"SPARED",
-	"ERR_EXCEEDED",
-	"IO_FAILURE",
-	"BAD_LOG",
-	"EXTERNAL",
-	"SPLIT_POOL",
-	"BAD_ASHIFT",
-	"EXTERNAL_PERSIST",
-	"ACTIVE",
-	"CHILDREN_OFFLINE",
-	"ASHIFT_TOO_BIG"
-};
-
 static const char *vdev_init_state_str[] = {
 	"NONE",
 	"ACTIVE",
@@ -513,7 +480,7 @@ get_usage(zpool_help_t idx)
 		return (gettext("\tinitialize [-c | -s | -u] [-w] <pool> "
 		    "[<device> ...]\n"));
 	case HELP_SCRUB:
-		return (gettext("\tscrub [-e | -s | -p | -C] [-w] "
+		return (gettext("\tscrub [-e | -s | -p | -C | -E | -S] [-w] "
 		    "<pool> ...\n"));
 	case HELP_RESILVER:
 		return (gettext("\tresilver <pool> ...\n"));
@@ -1090,15 +1057,10 @@ static nvlist_t *
 zpool_json_schema(int maj_v, int min_v)
 {
 	char cmd[MAX_CMD_LEN];
-	nvlist_t *sch = fnvlist_alloc();
-	nvlist_t *ov = fnvlist_alloc();
-
 	snprintf(cmd, MAX_CMD_LEN, "zpool %s", current_command->name);
-	fnvlist_add_string(ov, "command", cmd);
-	fnvlist_add_uint32(ov, "vers_major", maj_v);
-	fnvlist_add_uint32(ov, "vers_minor", min_v);
-	fnvlist_add_nvlist(sch, "output_version", ov);
-	fnvlist_free(ov);
+
+	nvlist_t *sch = fnvlist_alloc();
+	json_add_output_version(sch, cmd, maj_v, min_v);
 	return (sch);
 }
 
@@ -1248,7 +1210,7 @@ fill_vdev_info(nvlist_t *list, zpool_handle_t *zhp, char *name,
 		if (nvlist_lookup_uint64_array(nvdev, ZPOOL_CONFIG_VDEV_STATS,
 		    (uint64_t **)&vs, &c) == 0) {
 			fnvlist_add_string(list, "state",
-			    vdev_state_str[vs->vs_state]);
+			    vdev_state_string(vs->vs_state));
 		}
 	}
 }
@@ -8368,6 +8330,8 @@ zpool_do_reopen(int argc, char **argv)
 typedef struct scrub_cbdata {
 	int	cb_type;
 	pool_scrub_cmd_t cb_scrub_cmd;
+	time_t	cb_date_start;
+	time_t	cb_date_end;
 } scrub_cbdata_t;
 
 static boolean_t
@@ -8411,7 +8375,8 @@ scrub_callback(zpool_handle_t *zhp, void *data)
 		return (1);
 	}
 
-	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd);
+	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd, cb->cb_date_start,
+	    cb->cb_date_end);
 
 	if (err == 0 && zpool_has_checkpoint(zhp) &&
 	    cb->cb_type == POOL_SCAN_SCRUB) {
@@ -8430,10 +8395,27 @@ wait_callback(zpool_handle_t *zhp, void *data)
 	return (zpool_wait(zhp, *act));
 }
 
+static time_t
+date_string_to_sec(const char *timestr)
+{
+	struct tm tm = {0};
+
+	if (strptime(timestr, "%Y-%m-%d %H:%M", &tm) == NULL) {
+		if (strptime(timestr, "%Y-%m-%d", &tm) == NULL) {
+			fprintf(stderr, gettext("Failed to parse the date.\n"));
+			usage(B_FALSE);
+		}
+	}
+
+	return (timegm(&tm));
+}
+
 /*
- * zpool scrub [-e | -s | -p | -C] [-w] <pool> ...
+ * zpool scrub [-e | -s | -p | -C | -E | -S] [-w] <pool> ...
  *
  *	-e	Only scrub blocks in the error log.
+ *	-E	End date of scrub.
+ *	-S	Start date of scrub.
  *	-s	Stop.  Stops any in-progress scrub.
  *	-p	Pause. Pause in-progress scrub.
  *	-w	Wait.  Blocks until scrub has completed.
@@ -8449,6 +8431,7 @@ zpool_do_scrub(int argc, char **argv)
 
 	cb.cb_type = POOL_SCAN_SCRUB;
 	cb.cb_scrub_cmd = POOL_SCRUB_NORMAL;
+	cb.cb_date_start = cb.cb_date_end = 0;
 
 	boolean_t is_error_scrub = B_FALSE;
 	boolean_t is_pause = B_FALSE;
@@ -8456,13 +8439,19 @@ zpool_do_scrub(int argc, char **argv)
 	boolean_t is_txg_continue = B_FALSE;
 
 	/* check options */
-	while ((c = getopt(argc, argv, "spweC")) != -1) {
+	while ((c = getopt(argc, argv, "spweCE:S:")) != -1) {
 		switch (c) {
 		case 'e':
 			is_error_scrub = B_TRUE;
 			break;
+		case 'E':
+			cb.cb_date_end = date_string_to_sec(optarg);
+			break;
 		case 's':
 			is_stop = B_TRUE;
+			break;
+		case 'S':
+			cb.cb_date_start = date_string_to_sec(optarg);
 			break;
 		case 'p':
 			is_pause = B_TRUE;
@@ -8511,6 +8500,19 @@ zpool_do_scrub(int argc, char **argv)
 		}
 	}
 
+	if ((cb.cb_date_start != 0 || cb.cb_date_end != 0) &&
+	    cb.cb_scrub_cmd != POOL_SCRUB_NORMAL) {
+		(void) fprintf(stderr, gettext("invalid option combination: "
+		    "start/end date is available only with normal scrub\n"));
+		usage(B_FALSE);
+	}
+	if (cb.cb_date_start != 0 && cb.cb_date_end != 0 &&
+	    cb.cb_date_start > cb.cb_date_end) {
+		(void) fprintf(stderr, gettext("invalid arguments: "
+		    "end date has to be later than start date\n"));
+		usage(B_FALSE);
+	}
+
 	if (wait && (cb.cb_type == POOL_SCAN_NONE ||
 	    cb.cb_scrub_cmd == POOL_SCRUB_PAUSE)) {
 		(void) fprintf(stderr, gettext("invalid option combination: "
@@ -8551,6 +8553,7 @@ zpool_do_resilver(int argc, char **argv)
 
 	cb.cb_type = POOL_SCAN_RESILVER;
 	cb.cb_scrub_cmd = POOL_SCRUB_NORMAL;
+	cb.cb_date_start = cb.cb_date_end = 0;
 
 	/* check options */
 	while ((c = getopt(argc, argv, "")) != -1) {
@@ -9276,7 +9279,7 @@ vdev_stats_nvlist(zpool_handle_t *zhp, status_cbdata_t *cb, nvlist_t *nv,
 		fnvlist_add_string(vds, "was",
 		    fnvlist_lookup_string(nv, ZPOOL_CONFIG_PATH));
 	} else if (vs->vs_aux != VDEV_AUX_NONE) {
-		fnvlist_add_string(vds, "aux", vdev_aux_str[vs->vs_aux]);
+		fnvlist_add_string(vds, "aux", vdev_aux_string(vs->vs_aux));
 	} else if (children == 0 && !isspare &&
 	    getenv("ZPOOL_STATUS_NON_NATIVE_ASHIFT_IGNORE") == NULL &&
 	    VDEV_STAT_VALID(vs_physical_ashift, vsc) &&

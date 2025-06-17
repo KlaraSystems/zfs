@@ -86,7 +86,8 @@ top:
 
 	dmu_tx_commit(tx);
 
-	if (sigfunc != NULL && txg_wait_synced_sig(dp, dst.dst_txg)) {
+	if (sigfunc != NULL &&
+	    txg_wait_synced_flags(dp, dst.dst_txg, TXG_WAIT_SIGNAL)) {
 		/* current contract is to call func once */
 		sigfunc(arg, tx);
 		sigfunc = NULL;	/* in case we're performing an EAGAIN retry */

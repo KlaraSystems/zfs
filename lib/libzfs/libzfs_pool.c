@@ -2730,7 +2730,8 @@ out:
  * Scan the pool.
  */
 int
-zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd)
+zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd,
+    time_t date_start, time_t date_end)
 {
 	char errbuf[ERRBUFLEN];
 	int err;
@@ -2739,6 +2740,8 @@ zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd)
 	nvlist_t *args = fnvlist_alloc();
 	fnvlist_add_uint64(args, "scan_type", (uint64_t)func);
 	fnvlist_add_uint64(args, "scan_command", (uint64_t)cmd);
+	fnvlist_add_uint64(args, "scan_date_start", (uint64_t)date_start);
+	fnvlist_add_uint64(args, "scan_date_end", (uint64_t)date_end);
 
 	err = lzc_scrub(ZFS_IOC_POOL_SCRUB, zhp->zpool_name, args, NULL);
 	fnvlist_free(args);
@@ -2761,6 +2764,11 @@ zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd)
 	 * 1. we resumed a paused scrub.
 	 * 2. we resumed a paused error scrub.
 	 * 3. Error scrub is not run because of no error log.
+	 *
+	 * Note that we no longer return ECANCELED in case 1 or 2. However, in
+	 * order to prevent problems where we have a newer userland than
+	 * kernel, we keep this check in place. That prevents erroneous
+	 * failures when an older kernel returns ECANCELED in those cases.
 	 */
 	if (err == ECANCELED && (func == POOL_SCAN_SCRUB ||
 	    func == POOL_SCAN_ERRORSCRUB) && cmd == POOL_SCRUB_NORMAL)
@@ -5479,6 +5487,8 @@ zpool_get_vdev_prop_value(nvlist_t *nvprop, vdev_prop_t prop, char *prop_name,
 			intval = vdev_prop_default_numeric(prop);
 			/* Only use if provided by the RAIDZ VDEV above */
 			if (prop == VDEV_PROP_RAIDZ_EXPANDING)
+				return (ENOENT);
+			if (prop == VDEV_PROP_SIT_OUT)
 				return (ENOENT);
 		}
 		if (vdev_prop_index_to_string(prop, intval,

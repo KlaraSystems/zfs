@@ -36,6 +36,7 @@
 #include <sys/spa.h>
 #include <sys/spa_checkpoint.h>
 #include <sys/spa_log_spacemap.h>
+#include <sys/spa_stats_json.h>
 #include <sys/vdev.h>
 #include <sys/vdev_rebuild.h>
 #include <sys/vdev_removal.h>
@@ -54,6 +55,8 @@
 #include <sys/zthr.h>
 #include <sys/dsl_deadlist.h>
 #include <zfeature_common.h>
+
+#include "zfs_crrd.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -193,6 +196,8 @@ typedef enum spa_proc_state {
 } spa_proc_state_t;
 
 typedef struct spa_taskqs {
+	zio_taskq_type_t stqs_type;
+	zio_type_t stqs_zio_type;
 	uint_t stqs_count;
 	taskq_t **stqs_taskq;
 } spa_taskqs_t;
@@ -354,6 +359,12 @@ struct spa {
 	spa_checkpoint_info_t spa_checkpoint_info; /* checkpoint accounting */
 	zthr_t		*spa_checkpoint_discard_zthr;
 
+	kmutex_t	spa_txg_log_time_lock;	/* for spa_txg_log_time */
+	dbrrd_t		spa_txg_log_time;
+	uint64_t	spa_last_noted_txg;
+	uint64_t	spa_last_noted_txg_time;
+	uint64_t	spa_last_flush_txg_time;
+
 	space_map_t	*spa_syncing_log_sm;	/* current log space map */
 	avl_tree_t	spa_sm_logs_by_txg;
 	kmutex_t	spa_flushed_ms_lock;	/* for metaslabs_by_flushed */
@@ -448,6 +459,7 @@ struct spa {
 	uint64_t	spa_autotrim;		/* automatic background trim? */
 	uint64_t	spa_errata;		/* errata issues detected */
 	spa_stats_t	spa_stats;		/* assorted spa statistics */
+	spa_stats_json_t	spa_stats_json;	/* diagnostic status in JSON */
 	spa_keystore_t	spa_keystore;		/* loaded crypto keys */
 
 	/* arc_memory_throttle() parameters during low memory condition */

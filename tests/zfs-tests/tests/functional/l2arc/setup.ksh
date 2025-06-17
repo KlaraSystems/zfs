@@ -28,4 +28,9 @@ log_must mkdir -p $VDIR
 log_must mkfile $SIZE $VDEV
 log_must mkfile $SIZE $VDEV1
 
+log_must save_tunable ARC_MAX
+log_must save_tunable ARC_MIN
+log_must set_tunable32 ARC_MIN $((128 * 1024 * 1024))
+log_must set_tunable32 ARC_MAX $((1024 * 1024 * 1024))
+
 log_pass
