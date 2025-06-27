@@ -206,6 +206,8 @@ zio_checksum_info_t zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS] = {
 	    abd_checksum_blake3_tmpl_init, abd_checksum_blake3_tmpl_free,
 	    ZCHECKSUM_FLAG_METADATA | ZCHECKSUM_FLAG_DEDUP |
 	    ZCHECKSUM_FLAG_SALTED | ZCHECKSUM_FLAG_NOPWRITE, "blake3"},
+	{{abd_checksum_sha256,		abd_checksum_sha256},
+	    NULL, NULL, ZCHECKSUM_FLAG_METADATA, "anyraid_map"},
 };
 
 /*
@@ -408,6 +410,12 @@ zio_checksum_compute(zio_t *zio, enum zio_checksum checksum,
 		abd_copy_from_buf_off(abd, &cksum,
 		    eck_offset + offsetof(zio_eck_t, zec_cksum),
 		    sizeof (zio_cksum_t));
+	} else if (checksum == ZIO_CHECKSUM_ANYRAID_MAP) {
+		zio_eck_t *eck = (zio_eck_t *)(zio->io_private);
+		ci->ci_func[0](abd, size, spa->spa_cksum_tmpls[checksum],
+		    &cksum);
+		eck->zec_cksum = cksum;
+		memcpy(&eck->zec_magic, &zec_magic, sizeof (zec_magic));
 	} else {
 		saved = bp->blk_cksum;
 		ci->ci_func[0](abd, size, spa->spa_cksum_tmpls[checksum],
@@ -419,13 +427,14 @@ zio_checksum_compute(zio_t *zio, enum zio_checksum checksum,
 }
 
 int
-zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
-    enum zio_checksum checksum, abd_t *abd, uint64_t size, uint64_t offset,
-    zio_bad_cksum_t *info)
+zio_checksum_error_impl(zio_t *zio, enum zio_checksum checksum, abd_t *abd,
+    uint64_t size, uint64_t offset, zio_bad_cksum_t *info)
 {
 	zio_checksum_info_t *ci = &zio_checksum_table[checksum];
 	zio_cksum_t actual_cksum, expected_cksum;
 	zio_eck_t eck;
+	spa_t *spa = zio->io_spa;
+	const blkptr_t *bp = zio->io_bp;
 	int byteswap;
 
 	if (checksum >= ZIO_CHECKSUM_FUNCTIONS || ci->ci_func[0] == NULL)
@@ -433,8 +442,8 @@ zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
 
 	zio_checksum_template_init(checksum, spa);
 
-	IMPLY(bp == NULL, ci->ci_flags & ZCHECKSUM_FLAG_EMBEDDED);
-	IMPLY(bp == NULL, checksum == ZIO_CHECKSUM_LABEL);
+	IMPLY(bp == NULL, checksum == ZIO_CHECKSUM_LABEL ||
+	    checksum == ZIO_CHECKSUM_ANYRAID_MAP);
 
 	if (ci->ci_flags & ZCHECKSUM_FLAG_EMBEDDED) {
 		zio_cksum_t verifier;
@@ -498,6 +507,12 @@ zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
 			byteswap_uint64_array(&expected_cksum,
 			    sizeof (zio_cksum_t));
 		}
+	} else if (checksum == ZIO_CHECKSUM_ANYRAID_MAP) {
+		eck = *(zio_eck_t *)(zio->io_private);
+		byteswap = (eck.zec_magic == BSWAP_64(ZEC_MAGIC));
+		expected_cksum = eck.zec_cksum;
+		ci->ci_func[byteswap](abd, size,
+		    spa->spa_cksum_tmpls[checksum], &actual_cksum);
 	} else {
 		byteswap = BP_SHOULD_BYTESWAP(bp);
 		expected_cksum = bp->blk_cksum;
@@ -549,10 +564,9 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 	    (BP_IS_GANG(bp) ? SPA_GANGBLOCKSIZE : BP_GET_PSIZE(bp)));
 	uint64_t offset = zio->io_offset;
 	abd_t *data = zio->io_abd;
-	spa_t *spa = zio->io_spa;
 
-	error = zio_checksum_error_impl(spa, bp, checksum, data, size,
-	    offset, info);
+	error = zio_checksum_error_impl(zio, checksum, data, size, offset,
+	    info);
 
 	if (zio_injection_enabled && error == 0 && zio->io_error == 0) {
 		error = zio_handle_fault_injection(zio, ECKSUM);
