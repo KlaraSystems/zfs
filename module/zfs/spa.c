@@ -67,6 +67,7 @@
 #include <sys/vdev_disk.h>
 #include <sys/vdev_raidz.h>
 #include <sys/vdev_draid.h>
+#include <sys/vdev_anyraid.h>
 #include <sys/metaslab.h>
 #include <sys/metaslab_impl.h>
 #include <sys/mmp.h>
@@ -1231,29 +1232,14 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 			    spa->spa_proc, zio_taskq_basedc, flags);
 		} else {
 #endif
-			pri_t pri = maxclsyspri;
 			/*
 			 * The write issue taskq can be extremely CPU
 			 * intensive.  Run it at slightly less important
 			 * priority than the other taskqs.
-			 *
-			 * Under Linux and FreeBSD this means incrementing
-			 * the priority value as opposed to platforms like
-			 * illumos where it should be decremented.
-			 *
-			 * On FreeBSD, if priorities divided by four (RQ_PPQ)
-			 * are equal then a difference between them is
-			 * insignificant.
 			 */
-			if (t == ZIO_TYPE_WRITE && q == ZIO_TASKQ_ISSUE) {
-#if defined(__linux__)
-				pri++;
-#elif defined(__FreeBSD__)
-				pri += 4;
-#else
-#error "unknown OS"
-#endif
-			}
+			const pri_t pri = (t == ZIO_TYPE_WRITE &&
+			    q == ZIO_TASKQ_ISSUE) ?
+			    wtqclsyspri : maxclsyspri;
 			tq = taskq_create_proc(name, value, pri, 50,
 			    INT_MAX, spa->spa_proc, flags);
 #ifdef HAVE_SYSDC
@@ -5296,7 +5282,8 @@ spa_ld_checkpoint_rewind(spa_t *spa)
 			if (svdcount == SPA_SYNC_MIN_VDEVS)
 				break;
 		}
-		error = vdev_config_sync(svd, svdcount, spa->spa_first_txg);
+		error = vdev_config_sync(svd, svdcount, spa->spa_first_txg,
+		    VDEV_CONFIG_REWINDING_CHECKPOINT);
 		if (error == 0)
 			spa->spa_last_synced_guid = rvd->vdev_guid;
 		spa_config_exit(spa, SCL_ALL, FTAG);
@@ -6688,6 +6675,10 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	for (int i = 0; i < ndraid; i++)
 		spa_feature_incr(spa, SPA_FEATURE_DRAID, tx);
 
+	for (uint64_t i = 0; i < rvd->vdev_children; i++)
+		if (rvd->vdev_child[i]->vdev_ops == &vdev_anyraid_ops)
+			spa_feature_incr(spa, SPA_FEATURE_ANYRAID, tx);
+
 	dmu_tx_commit(tx);
 
 	spa->spa_sync_on = B_TRUE;
@@ -7279,12 +7270,25 @@ spa_draid_feature_incr(void *arg, dmu_tx_t *tx)
 }
 
 /*
+ * This is called as a synctask to increment the anyraid feature flag
+ */
+static void
+spa_anyraid_feature_incr(void *arg, dmu_tx_t *tx)
+{
+	spa_t *spa = dmu_tx_pool(tx)->dp_spa;
+	uint64_t nanyraid = (uint64_t)(uintptr_t)arg;
+
+	for (int i = 0; i < nanyraid; i++)
+		spa_feature_incr(spa, SPA_FEATURE_ANYRAID, tx);
+}
+
+/*
  * Add a device to a storage pool.
  */
 int
 spa_vdev_add(spa_t *spa, nvlist_t *nvroot, boolean_t check_ashift)
 {
-	uint64_t txg, ndraid = 0;
+	uint64_t txg, ndraid = 0, nanyraid = 0;
 	int error;
 	vdev_t *rvd = spa->spa_root_vdev;
 	vdev_t *vd, *tvd;
@@ -7415,6 +7419,19 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot, boolean_t check_ashift)
 		tx = dmu_tx_create_assigned(spa->spa_dsl_pool, txg);
 		dsl_sync_task_nowait(spa->spa_dsl_pool, spa_draid_feature_incr,
 		    (void *)(uintptr_t)ndraid, tx);
+		dmu_tx_commit(tx);
+	}
+
+	for (uint64_t i = 0; i < vd->vdev_children; i++)
+		if (vd->vdev_child[i]->vdev_ops == &vdev_anyraid_ops)
+			nanyraid++;
+	if (nanyraid > 0) {
+		dmu_tx_t *tx;
+
+		tx = dmu_tx_create_assigned(spa->spa_dsl_pool, txg);
+		dsl_sync_task_nowait(spa->spa_dsl_pool,
+		    spa_anyraid_feature_incr,
+		    (void *)(uintptr_t)nanyraid, tx);
 		dmu_tx_commit(tx);
 	}
 
@@ -7584,6 +7601,7 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 		return (spa_vdev_exit(spa, NULL, txg, ENODEV));
 
 	boolean_t raidz = oldvd->vdev_ops == &vdev_raidz_ops;
+	boolean_t anyraid = oldvd->vdev_ops == &vdev_anyraid_ops;
 
 	if (raidz) {
 		if (!spa_feature_is_enabled(spa, SPA_FEATURE_RAIDZ_EXPANSION))
@@ -7596,11 +7614,11 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 			return (spa_vdev_exit(spa, NULL, txg,
 			    ZFS_ERR_RAIDZ_EXPAND_IN_PROGRESS));
 		}
-	} else if (!oldvd->vdev_ops->vdev_op_leaf) {
+	} else if (!anyraid && !oldvd->vdev_ops->vdev_op_leaf) {
 		return (spa_vdev_exit(spa, NULL, txg, ENOTSUP));
 	}
 
-	if (raidz)
+	if (raidz || anyraid)
 		pvd = oldvd;
 	else
 		pvd = oldvd->vdev_parent;
@@ -7661,10 +7679,13 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 		 */
 		if (pvd->vdev_ops != &vdev_mirror_ops &&
 		    pvd->vdev_ops != &vdev_root_ops &&
-		    !raidz)
+		    !raidz && !anyraid)
 			return (spa_vdev_exit(spa, newrootvd, txg, ENOTSUP));
 
-		pvops = &vdev_mirror_ops;
+		if (anyraid)
+			pvops = &vdev_anyraid_ops;
+		else
+			pvops = &vdev_mirror_ops;
 	} else {
 		/*
 		 * Active hot spares can only be replaced by inactive hot
@@ -7707,7 +7728,9 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 	 * Make sure the new device is big enough.
 	 */
 	vdev_t *min_vdev = raidz ? oldvd->vdev_child[0] : oldvd;
-	if (newvd->vdev_asize < vdev_get_min_asize(min_vdev))
+	if ((anyraid && newvd->vdev_asize < vdev_anyraid_min_newsize(min_vdev,
+	    newvd->vdev_ashift)) ||
+	    (!anyraid && newvd->vdev_asize < vdev_get_min_asize(min_vdev)))
 		return (spa_vdev_exit(spa, newrootvd, txg, EOVERFLOW));
 
 	/*
@@ -7754,6 +7777,11 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 		    (uint_t)vdev_get_nparity(oldvd), (uint_t)oldvd->vdev_id);
 		oldvdpath = spa_strdup(tmp);
 		kmem_strfree(tmp);
+	} else if (anyraid) {
+		char *tmp = kmem_asprintf(VDEV_TYPE_ANYRAID "%u-%u",
+		    (uint_t)vdev_get_nparity(oldvd), (uint_t)oldvd->vdev_id);
+		oldvdpath = spa_strdup(tmp);
+		kmem_strfree(tmp);
 	} else {
 		oldvdpath = spa_strdup(oldvd->vdev_path);
 	}
@@ -7781,7 +7809,7 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 	 * If the parent is not a mirror, or if we're replacing, insert the new
 	 * mirror/replacing/spare vdev above oldvd.
 	 */
-	if (!raidz && pvd->vdev_ops != pvops) {
+	if (!raidz && !anyraid && pvd->vdev_ops != pvops) {
 		pvd = vdev_add_parent(oldvd, pvops);
 		ASSERT(pvd->vdev_ops == pvops);
 		ASSERT(oldvd->vdev_parent == pvd);
@@ -7839,6 +7867,13 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing,
 		dsl_sync_task_nowait(spa->spa_dsl_pool, vdev_raidz_attach_sync,
 		    newvd, tx);
 		dmu_tx_commit(tx);
+	} else if (anyraid) {
+		vdev_anyraid_expand(tvd, newvd);
+		vdev_dirty(tvd, VDD_DTL, newvd, txg);
+		tvd->vdev_expanding = B_TRUE;
+		vdev_reopen(tvd);
+		spa->spa_ccw_fail_time = 0;
+		spa_async_request(spa, SPA_ASYNC_CONFIG_UPDATE);
 	} else {
 		vdev_dtl_dirty(newvd, DTL_MISSING, TXG_INITIAL,
 		    dtl_max_txg - TXG_INITIAL);
@@ -10118,6 +10153,13 @@ spa_sync_rewrite_vdev_config(spa_t *spa, dmu_tx_t *tx)
 {
 	vdev_t *rvd = spa->spa_root_vdev;
 	uint64_t txg = tx->tx_txg;
+	vdev_config_sync_status_t status;
+	if (dmu_tx_get_txg(tx) == spa->spa_checkpoint_txg + 1)
+		status = VDEV_CONFIG_CREATING_CHECKPOINT;
+	else if (spa->spa_checkpoint_txg == 0)
+		status = VDEV_CONFIG_DISCARDING_CHECKPOINT;
+	else
+		status = VDEV_CONFIG_NORMAL;
 
 	for (;;) {
 		int error = 0;
@@ -10151,10 +10193,10 @@ spa_sync_rewrite_vdev_config(spa_t *spa, dmu_tx_t *tx)
 				if (svdcount == SPA_SYNC_MIN_VDEVS)
 					break;
 			}
-			error = vdev_config_sync(svd, svdcount, txg);
+			error = vdev_config_sync(svd, svdcount, txg, status);
 		} else {
 			error = vdev_config_sync(rvd->vdev_child,
-			    rvd->vdev_children, txg);
+			    rvd->vdev_children, txg, status);
 		}
 
 		if (error == 0)

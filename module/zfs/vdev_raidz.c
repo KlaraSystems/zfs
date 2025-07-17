@@ -2311,10 +2311,11 @@ vdev_raidz_psize_to_asize(vdev_t *vd, uint64_t psize, uint64_t txg)
  * so each child must provide at least 1/Nth of its asize.
  */
 static uint64_t
-vdev_raidz_min_asize(vdev_t *vd)
+vdev_raidz_min_asize(vdev_t *pvd, vdev_t *cvd)
 {
-	return ((vd->vdev_min_asize + vd->vdev_children - 1) /
-	    vd->vdev_children);
+	(void) cvd;
+	return ((pvd->vdev_min_asize + pvd->vdev_children - 1) /
+	    pvd->vdev_children);
 }
 
 void
@@ -2691,7 +2692,7 @@ raidz_checksum_verify(zio_t *zio)
 	 */
 	if (zio->io_flags & ZIO_FLAG_DIO_READ && ret == ECKSUM) {
 		zio->io_error = ret;
-		zio->io_flags |= ZIO_FLAG_DIO_CHKSUM_ERR;
+		zio->io_post |= ZIO_POST_DIO_CHKSUM_ERR;
 		zio_dio_chksum_verify_error_report(zio);
 		zio_checksum_verified(zio);
 		return (0);
@@ -3048,7 +3049,7 @@ raidz_reconstruct(zio_t *zio, int *ltgts, int ntgts, int nparity)
 
 	/* Check for success */
 	if (raidz_checksum_verify(zio) == 0) {
-		if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
+		if (zio->io_post & ZIO_POST_DIO_CHKSUM_ERR)
 			return (0);
 
 		/* Reconstruction succeeded - report errors */
@@ -3514,7 +3515,7 @@ vdev_raidz_io_done(zio_t *zio)
 		}
 
 		if (raidz_checksum_verify(zio) == 0) {
-			if (zio->io_flags & ZIO_FLAG_DIO_CHKSUM_ERR)
+			if (zio->io_post & ZIO_POST_DIO_CHKSUM_ERR)
 				goto done;
 
 			for (int i = 0; i < rm->rm_nrows; i++) {
