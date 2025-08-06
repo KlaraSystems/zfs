@@ -344,6 +344,7 @@ tests = ['zpool_scrub_001_neg', 'zpool_scrub_003_pos',
     'zpool_scrub_offline_device', 'zpool_scrub_multiple_copies',
     'zpool_scrub_date_range_001']
 tags = ['functional', 'cli_root', 'zpool_scrub']
+timeout = 600
 
 [tests/functional/cli_root/zpool_set]
 tests = ['zpool_set_001_pos', 'zpool_set_002_neg', 'zpool_set_003_neg',

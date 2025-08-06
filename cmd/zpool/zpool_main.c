@@ -8375,9 +8375,8 @@ scrub_callback(zpool_handle_t *zhp, void *data)
 		return (1);
 	}
 
-	err = zpool_scan(zhp, cb->cb_type, cb->cb_scrub_cmd, cb->cb_date_start,
-	    cb->cb_date_end);
-
+	err = zpool_scan_range(zhp, cb->cb_type, cb->cb_scrub_cmd,
+	    cb->cb_date_start, cb->cb_date_end);
 	if (err == 0 && zpool_has_checkpoint(zhp) &&
 	    cb->cb_type == POOL_SCAN_SCRUB) {
 		(void) printf(gettext("warning: will not scrub state that "
@@ -8396,18 +8395,25 @@ wait_callback(zpool_handle_t *zhp, void *data)
 }
 
 static time_t
-date_string_to_sec(const char *timestr)
+date_string_to_sec(const char *timestr, boolean_t rounding)
 {
 	struct tm tm = {0};
+	int adjustment = rounding ? 1 : 0;
+
+	/* Allow mktime to determine timezone. */
+	tm.tm_isdst = -1;
 
 	if (strptime(timestr, "%Y-%m-%d %H:%M", &tm) == NULL) {
 		if (strptime(timestr, "%Y-%m-%d", &tm) == NULL) {
 			fprintf(stderr, gettext("Failed to parse the date.\n"));
 			usage(B_FALSE);
 		}
+		adjustment *= 24 * 60 * 60;
+	} else {
+		adjustment *= 60;
 	}
 
-	return (timegm(&tm));
+	return (mktime(&tm) + adjustment);
 }
 
 /*
@@ -8445,13 +8451,17 @@ zpool_do_scrub(int argc, char **argv)
 			is_error_scrub = B_TRUE;
 			break;
 		case 'E':
-			cb.cb_date_end = date_string_to_sec(optarg);
+			/*
+			 * Round the date. It's better to scrub more data than
+			 * less. This also makes the date inclusive.
+			 */
+			cb.cb_date_end = date_string_to_sec(optarg, B_TRUE);
 			break;
 		case 's':
 			is_stop = B_TRUE;
 			break;
 		case 'S':
-			cb.cb_date_start = date_string_to_sec(optarg);
+			cb.cb_date_start = date_string_to_sec(optarg, B_FALSE);
 			break;
 		case 'p':
 			is_pause = B_TRUE;
