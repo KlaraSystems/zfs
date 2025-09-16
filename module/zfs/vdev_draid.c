@@ -22,6 +22,7 @@
 /*
  * Copyright (c) 2018 Intel Corporation.
  * Copyright (c) 2020 by Lawrence Livermore National Security, LLC.
+ * Copyright (c) 2025, Klara, Inc.
  */
 
 #include <sys/zfs_context.h>
@@ -1994,7 +1995,9 @@ vdev_draid_io_start_read(zio_t *zio, raidz_row_t *rr)
 				rc->rc_force_repair = 1;
 				rc->rc_allow_repair = 1;
 			}
-		} else if (vdev_sit_out_reads(cvd, zio->io_flags)) {
+		}
+
+		if (vdev_sit_out_reads(cvd, zio->io_flags)) {
 			rr->rr_outlier_cnt++;
 			ASSERT0(rc->rc_latency_outlier);
 			rc->rc_latency_outlier = 1;

@@ -36,15 +36,14 @@
 
 #
 # DESCRIPTION:
-# 	Replacing disks while a disk is sitting out reads should pass
+# 	Attaching disks while a disk is sitting out reads should pass
 #
 # STRATEGY:
-#	1. Create raidz and draid pools
+#	1. Create raidz pools
 #	2. Make one disk slower and trigger a read sit out for that disk
 #	3. Start some random I/O
-#	4. Replace a disk in the pool with another disk.
+#	4. Attach a disk to the pool.
 #	5. Verify the integrity of the file system and the resilvering.
-#
 
 verify_runnable "global"
 
@@ -61,9 +60,8 @@ function cleanup
 	log_must zpool events -c
 
 	if [[ -n "$child_pids" ]]; then
-		for wait_pid in $child_pids
-		do
-			kill $wait_pid
+		for wait_pid in $child_pids; do
+		        kill $wait_pid
 		done
 	fi
 
@@ -97,12 +95,10 @@ options="$options -r "
 
 child_pids=""
 
-function replace_test
+function attach_test
 {
-	typeset -i iters=2
-	typeset disk1=$1
-	typeset disk2=$2
-	typeset repl_type=$3
+	typeset vdev=$1
+	typeset disk=$2
 
 	typeset i=0
 	while [[ $i -lt $iters ]]; do
@@ -116,14 +112,10 @@ function replace_test
 		((i = i + 1))
 	done
 
-	typeset repl_flag="-w"
-	if [[ "$repl_type" == "seq" ]]; then
-		repl_flag="-ws"
-	fi
-	# replace disk with a slow drive still present
+	# attach disk with a slow drive still present
 	SECONDS=0
-	log_must zpool replace $repl_flag $TESTPOOL1 $disk1 $disk2
-	log_note took $SECONDS seconds to replace disk
+	log_must zpool attach -w $TESTPOOL1 $vdev $disk
+	log_note took $SECONDS seconds to attach disk
 
 	for wait_pid in $child_pids
 	do
@@ -132,11 +124,11 @@ function replace_test
 	child_pids=""
 
 	log_must zinject -c all
-	log_must zpool export $TESTPOOL1
-	log_must zpool import -d $TESTDIR $TESTPOOL1
-	log_must zfs umount $TESTPOOL1/$TESTFS1
-	log_must zdb -cdui $TESTPOOL1/$TESTFS1
-	log_must zfs mount $TESTPOOL1/$TESTFS1
+        log_must zpool export $TESTPOOL1
+        log_must zpool import -d $TESTDIR $TESTPOOL1
+        log_must zfs umount $TESTPOOL1/$TESTFS1
+        log_must zdb -cdui $TESTPOOL1/$TESTFS1
+        log_must zfs mount $TESTPOOL1/$TESTFS1
 	verify_pool $TESTPOOL1
 }
 
@@ -144,7 +136,7 @@ DEVSIZE="150M"
 specials_list=""
 i=0
 while [[ $i != 10 ]]; do
-	log_must truncate -s $DEVSIZE $TESTDIR/$TESTFILE1.$i
+	truncate -s $DEVSIZE $TESTDIR/$TESTFILE1.$i
 	specials_list="$specials_list $TESTDIR/$TESTFILE1.$i"
 
 	((i = i + 1))
@@ -154,9 +146,9 @@ slow_disk=$TESTDIR/$TESTFILE1.3
 log_must truncate -s $DEVSIZE $TESTDIR/$REPLACEFILE
 
 # Test file size in MB
-count=400
+count=200
 
-for type in "raidz2" "raidz3" "draid2"; do
+for type in "raidz1" "raidz2" "raidz3" ; do
 	create_pool $TESTPOOL1 $type $specials_list
 	log_must zpool set autosit=on $TESTPOOL1 "${type}-0"
 	log_must zfs create -o primarycache=none -o recordsize=512K \
@@ -180,15 +172,13 @@ for type in "raidz2" "raidz3" "draid2"; do
 			break
 		fi
 	done
+
 	log_must test "$(get_vdev_prop sit_out $TESTPOOL1 $slow_disk)" == "on"
 	log_note took $SECONDS seconds to reach sit out reading ${size}M
 	log_must zpool status -s $TESTPOOL1
 
-	typeset repl_type="replace"
-	if [[ "$type" == "draid2" && $((RANDOM % 2)) -eq 0 ]]; then
-		repl_type="seq"
-	fi
-	replace_test $TESTDIR/$TESTFILE1.1 $TESTDIR/$REPLACEFILE $repl_type
+	typeset top=$(zpool status -j | jq -r ".pools.$TESTPOOL1.vdevs[].vdevs[].name")
+	attach_test $top $TESTDIR/$REPLACEFILE
 
 	log_must eval "zpool iostat -v $TESTPOOL1 | grep \"$REPLACEFILE\""
 

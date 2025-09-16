@@ -5659,8 +5659,16 @@ zpool_set_vdev_prop(zpool_handle_t *zhp, const char *vdevname,
 	nvlist_free(nvl);
 	nvlist_free(outnvl);
 
-	if (ret)
-		(void) zpool_standard_error(zhp->zpool_hdl, errno, errbuf);
+	if (ret) {
+		if (errno == ENOTSUP) {
+			zfs_error_aux(zhp->zpool_hdl, dgettext(TEXT_DOMAIN,
+			    "property not supported for this vdev"));
+			(void) zfs_error(zhp->zpool_hdl, EZFS_PROPTYPE, errbuf);
+		} else {
+			(void) zpool_standard_error(zhp->zpool_hdl, errno,
+			    errbuf);
+		}
+	}
 
 	return (ret);
 }
