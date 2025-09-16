@@ -569,6 +569,7 @@
     <elf-symbol name='zpool_reguid' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='zpool_reopen_one' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='zpool_scan' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
+    <elf-symbol name='zpool_scan_range' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='zpool_search_import' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='zpool_set_bootenv' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='zpool_set_guid' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
@@ -5921,7 +5922,8 @@
       <enumerator name='VDEV_PROP_TRIM_ERRORS' value='50'/>
       <enumerator name='VDEV_PROP_SLOW_IOS' value='51'/>
       <enumerator name='VDEV_PROP_SIT_OUT' value='52'/>
-      <enumerator name='VDEV_NUM_PROPS' value='53'/>
+      <enumerator name='VDEV_PROP_AUTOSIT' value='53'/>
+      <enumerator name='VDEV_NUM_PROPS' value='54'/>
     </enum-decl>
     <typedef-decl name='vdev_prop_t' type-id='1573bec8' id='5aa5c90c'/>
     <class-decl name='zpool_load_policy' size-in-bits='256' is-struct='yes' visibility='default' id='2f65b36f'>
@@ -6721,6 +6723,14 @@
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='zpool_scan' mangled-name='zpool_scan' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zpool_scan'>
+      <parameter type-id='4c81de99' name='zhp'/>
+      <parameter type-id='7313fbe2' name='func'/>
+      <parameter type-id='b51cf3c2' name='cmd'/>
+      <parameter type-id='c9d12d66' name='date_start'/>
+      <parameter type-id='c9d12d66' name='date_end'/>
+      <return type-id='95e97e5e'/>
+    </function-decl>
+    <function-decl name='zpool_scan_range' mangled-name='zpool_scan_range' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='zpool_scan_range'>
       <parameter type-id='4c81de99' name='zhp'/>
       <parameter type-id='7313fbe2' name='func'/>
       <parameter type-id='b51cf3c2' name='cmd'/>

@@ -23,6 +23,7 @@
  * Copyright (c) 2024 Klara Inc.
  *
  * This software was developed by
+ * Mariusz Zaborski <mariusz.zaborski@klarasystems.com>
  * Fred Weigel <fred.weigel@klarasystems.com>
  * Mariusz Zaborski <mariusz.zaborski@klarasystems.com>
  * under sponsorship from Wasabi Technology, Inc. and Klara Inc.
@@ -63,7 +64,7 @@ typedef struct {
 size_t rrd_len(rrd_t *rrd);
 
 const rrd_data_t *rrd_entry(rrd_t *r, size_t i);
-const rrd_data_t *rrd_tail_entry(rrd_t *rrd);
+rrd_data_t *rrd_tail_entry(rrd_t *rrd);
 uint64_t rrd_tail(rrd_t *rrd);
 uint64_t rrd_get(rrd_t *rrd, size_t i);
 

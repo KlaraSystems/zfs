@@ -2730,8 +2730,13 @@ out:
  * Scan the pool.
  */
 int
-zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd,
-    time_t date_start, time_t date_end)
+zpool_scan(zpool_handle_t *zhp, pool_scan_func_t func, pool_scrub_cmd_t cmd) {
+	return (zpool_scan_range(zhp, func, cmd, 0, 0));
+}
+
+int
+zpool_scan_range(zpool_handle_t *zhp, pool_scan_func_t func,
+    pool_scrub_cmd_t cmd, time_t date_start, time_t date_end)
 {
 	char errbuf[ERRBUFLEN];
 	int err;
@@ -5659,8 +5664,16 @@ zpool_set_vdev_prop(zpool_handle_t *zhp, const char *vdevname,
 	nvlist_free(nvl);
 	nvlist_free(outnvl);
 
-	if (ret)
-		(void) zpool_standard_error(zhp->zpool_hdl, errno, errbuf);
+	if (ret) {
+		if (errno == ENOTSUP) {
+			zfs_error_aux(zhp->zpool_hdl, dgettext(TEXT_DOMAIN,
+			    "property not supported for this vdev"));
+			(void) zfs_error(zhp->zpool_hdl, EZFS_PROPTYPE, errbuf);
+		} else {
+			(void) zpool_standard_error(zhp->zpool_hdl, errno,
+			    errbuf);
+		}
+	}
 
 	return (ret);
 }

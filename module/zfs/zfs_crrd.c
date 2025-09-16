@@ -23,18 +23,53 @@
  * Copyright (c) 2024 Klara Inc.
  *
  * This software was developed by
+ * Mariusz Zaborski <mariusz.zaborski@klarasystems.com>
  * Fred Weigel <fred.weigel@klarasystems.com>
  * Mariusz Zaborski <mariusz.zaborski@klarasystems.com>
  * under sponsorship from Wasabi Technology, Inc. and Klara Inc.
  */
 /*
+ * This file implements a round-robin database that stores timestamps and txg
+ * numbers. Due to limited space, we use a round-robin approach, where
+ * the oldest records are overwritten when there is no longer enough room.
+ * This is a best-effort mechanism, and the database should be treated as
  * This file implements a round robin database.
+ *
+ * The database is linear, meaning we assume each new entry is newer than the
+ * ones already stored. Because of this, if time is manipulated, the database
+ * will only accept records that are newer than the existing ones.
+ * (For example, jumping 10 years into the future and then back can lead to
+ * situation when for 10 years we wont write anything to database)
+ *
+ * All times stored in the database use UTC, which makes it easy to convert to
+ * and from local time.
+ *
+ * Each database holds 256 records (as defined in the `RRD_MAX_ENTRIES` macro).
+ * This limit comes from the maximum size of a ZAP object, where we store the
+ * binary blob.
+ *
+ * We've split the database into three smaller ones.
+ * The `minute database` provides high resolution (default: every 10 minutes),
+ * but only covers approximately 1.5 days. This gives a detailed view of recent
+ * activity, useful, for example, when performing a scrub of the last hour.
+ * The `daily database` records one txg per day. With 256 entries, it retains
+ * roughly 8 months of data. This allows users to scrub or analyze txgs across
+ * a range of days.
+ * The `monthly database` stores one record per month, giving approximately
+ * 21 years of history.
+ * All these calculations assume the worst-case scenario: the pool is always
+ * online and actively written to.
+ *
+ * A potential source of confusion is that the database does not store data
+ * while the pool is offline, leading to potential gaps in timeline. Also,
+ * the database contains no records from before this feature was enabled.
+ * Both, upon reflection, are expected.
  */
 #include <sys/zfs_context.h>
 
 #include "zfs_crrd.h"
 
-const rrd_data_t *
+rrd_data_t *
 rrd_tail_entry(rrd_t *rrd)
 {
 	size_t n;
@@ -96,6 +131,16 @@ rrd_get(rrd_t *rrd, size_t i)
 void
 rrd_add(rrd_t *rrd, hrtime_t time, uint64_t txg)
 {
+	rrd_data_t *tail;
+
+	tail = rrd_tail_entry(rrd);
+	if (tail != NULL && tail->rrdd_time == time) {
+		if (tail->rrdd_txg < txg) {
+			tail->rrdd_txg = txg;
+		} else {
+			return;
+		}
+	}
 
 	rrd->rrd_entries[rrd->rrd_tail].rrdd_time = time;
 	rrd->rrd_entries[rrd->rrd_tail].rrdd_txg = txg;
@@ -112,16 +157,18 @@ rrd_add(rrd_t *rrd, hrtime_t time, uint64_t txg)
 void
 dbrrd_add(dbrrd_t *db, hrtime_t time, uint64_t txg)
 {
-	hrtime_t daydiff, monthdiff;
+	hrtime_t daydiff, monthdiff, minutedif;
 
+	minutedif = time - rrd_tail(&db->dbr_minutes);
 	daydiff = time - rrd_tail(&db->dbr_days);
 	monthdiff = time - rrd_tail(&db->dbr_months);
 
-	rrd_add(&db->dbr_minutes, time, txg);
-	if (daydiff >= 0 && daydiff >= SEC2NSEC(60 * 3600))
-		rrd_add(&db->dbr_days, time, txg);
-	if (monthdiff >= 0 && monthdiff >= SEC2NSEC(60 * 3600 * 30))
+	if (monthdiff >= 0 && monthdiff >= 30 * 24 * 60 * 60)
 		rrd_add(&db->dbr_months, time, txg);
+	else if (daydiff >= 0 && daydiff >= 24 * 60 * 60)
+		rrd_add(&db->dbr_days, time, txg);
+	else if (minutedif >= 0)
+		rrd_add(&db->dbr_minutes, time, txg);
 }
 
 /*
@@ -132,9 +179,8 @@ dbrrd_add(dbrrd_t *db, hrtime_t time, uint64_t txg)
 static const rrd_data_t *
 rrd_query(rrd_t *rrd, hrtime_t tv, dbrrd_rounding_t rounding)
 {
-	const rrd_data_t *data;
+	const rrd_data_t *data = NULL;
 
-	data = NULL;
 	for (size_t i = 0; i < rrd_len(rrd); i++) {
 		const rrd_data_t *cur = rrd_entry(rrd, i);
 
@@ -156,25 +202,15 @@ rrd_query(rrd_t *rrd, hrtime_t tv, dbrrd_rounding_t rounding)
 }
 
 static const rrd_data_t *
-dbrrd_min(const rrd_data_t *r1, const rrd_data_t *r2)
+dbrrd_closest(hrtime_t tv, const rrd_data_t *r1, const rrd_data_t *r2)
 {
+
 	if (r1 == NULL)
 		return (r2);
 	if (r2 == NULL)
 		return (r1);
 
-	return (r1->rrdd_txg < r2->rrdd_txg ? r1 : r2);
-}
-
-static const rrd_data_t *
-dbrrd_max(const rrd_data_t *r1, const rrd_data_t *r2)
-{
-	if (r1 == NULL)
-		return (r2);
-	if (r2 == NULL)
-		return (r1);
-
-	return (r1->rrdd_txg > r2->rrdd_txg ? r1 : r2);
+	return (ABS(tv - r1->rrdd_time) < ABS(tv - r2->rrdd_time) ? r1 : r2);
 }
 
 uint64_t
@@ -187,11 +223,7 @@ dbrrd_query(dbrrd_t *r, hrtime_t tv, dbrrd_rounding_t rounding)
 	dd = rrd_query(&r->dbr_days, tv, rounding);
 	dy = rrd_query(&r->dbr_months, tv, rounding);
 
-	if (rounding == DBRRD_FLOOR) {
-		data = dbrrd_max(dbrrd_max(dd, dm), dy);
-	} else {
-		data = dbrrd_min(dbrrd_min(dd, dm), dy);
-	}
+	data = dbrrd_closest(tv, dbrrd_closest(tv, dd, dm), dy);
 
 	return (data == NULL ? 0 : data->rrdd_txg);
 }

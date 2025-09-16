@@ -322,14 +322,36 @@ static int zfs_livelist_condense_new_alloc = 0;
 
 /*
  * Time variable to decide how often the txg should be added into the
- * database.
+ * The smallest available resolution is in minutes, which means an update occurs
+ * each time we reach `spa_note_txg_time` and the txg has changed. We provide
+ * a 256-slot ring buffer for minute-level resolution. The number is limited by
+ * the size of the structure we use and the maximum amount of bytes we can write
+ * into ZAP. Setting `spa_note_txg_time` to 10 minutes results in approximately
+ * 144 records per day. Given the 256 slots, this provides roughly 1.5 days of
+ * high-resolution data.
+ *
+ * The user can decrease `spa_note_txg_time` to increase resolution within
+ * a day, at the cost of retaining fewer days of data. Alternatively, increasing
+ * the interval allows storing data over a longer period, but with lower
+ * frequency.
+ *
+ * This parameter does not affect the daily or monthly databases, as those only
+ * store one record per day and per month, respectively.
  */
-static uint_t spa_note_txg_time = 60;
+static uint_t spa_note_txg_time = 10 * 60;
 
 /*
- * How often flush txg database to a disk.
+ * We flush data every time we write to it, making it the most reliable option.
+ * Since this happens every 10 minutes, it shouldn't introduce any noticeable
+ * overhead for the system. In case of failure, we will always have an
+ * up-to-date version of the database.
+ *
+ * The user can adjust the flush interval to a lower value, but it probably
+ * doesn't make sense to flush more often than the database is updated.
+ * The user can also increase the interval if they're concerned about the
+ * performance of writing the entire database to disk.
  */
-static uint_t spa_flush_txg_time = 5 * 60;
+static uint_t spa_flush_txg_time = 10 * 60;
 
 /*
  * ==========================================================================
@@ -2149,16 +2171,24 @@ spa_load_txg_log_time(spa_t *spa)
 	error = zap_lookup(spa->spa_meta_objset, DMU_POOL_DIRECTORY_OBJECT,
 	    DMU_POOL_TXG_LOG_TIME_MINUTES, RRD_ENTRY_SIZE, RRD_STRUCT_ELEM,
 	    &spa->spa_txg_log_time.dbr_minutes);
-	error |= zap_lookup(spa->spa_meta_objset, DMU_POOL_DIRECTORY_OBJECT,
+	if (error != 0 && error != ENOENT) {
+		spa_load_note(spa, "unable to load a txg time database with "
+		    "minute resolution [error=%d]", error);
+	}
+	error = zap_lookup(spa->spa_meta_objset, DMU_POOL_DIRECTORY_OBJECT,
 	    DMU_POOL_TXG_LOG_TIME_DAYS, RRD_ENTRY_SIZE, RRD_STRUCT_ELEM,
 	    &spa->spa_txg_log_time.dbr_days);
-	error |= zap_lookup(spa->spa_meta_objset, DMU_POOL_DIRECTORY_OBJECT,
+	if (error != 0 && error != ENOENT) {
+		spa_load_note(spa, "unable to load a txg time database with "
+		    "day resolution [error=%d]", error);
+	}
+	error = zap_lookup(spa->spa_meta_objset, DMU_POOL_DIRECTORY_OBJECT,
 	    DMU_POOL_TXG_LOG_TIME_MONTHS, RRD_ENTRY_SIZE, RRD_STRUCT_ELEM,
 	    &spa->spa_txg_log_time.dbr_months);
 
-	if (error != 0) {
-		memset(&spa->spa_txg_log_time, 0,
-		    sizeof (spa->spa_txg_log_time));
+	if (error != 0 && error != ENOENT) {
+		spa_load_note(spa, "unable to load a txg time database with "
+		    "month resolution [error=%d]", error);
 	}
 }
 
