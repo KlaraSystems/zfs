@@ -626,6 +626,7 @@ zap_lockdir_impl(dnode_t *dn, dmu_buf_t *db, const void *tag, dmu_tx_t *tx,
 	ASSERT0(db->db_offset);
 	objset_t *os = dmu_buf_get_objset(db);
 	uint64_t obj = db->db_object;
+	int err;
 
 	*zapp = NULL;
 
@@ -665,8 +666,13 @@ zap_lockdir_impl(dnode_t *dn, dmu_buf_t *db, const void *tag, dmu_tx_t *tx,
 	zap->zap_objset = os;
 	zap->zap_dnode = dn;
 
-	if (lt == RW_WRITER)
+	if (lt == RW_WRITER) {
 		dmu_buf_will_dirty(db, tx);
+		if (SPA_EXITING(os->os_spa)) {
+			rw_exit(&zap->zap_rwlock);
+			return (SET_ERROR(EIO));
+		}
+	}
 
 	ASSERT3P(zap->zap_dbuf, ==, db);
 
@@ -679,12 +685,17 @@ zap_lockdir_impl(dnode_t *dn, dmu_buf_t *db, const void *tag, dmu_tx_t *tx,
 			dprintf("upgrading obj %llu: num_entries=%u\n",
 			    (u_longlong_t)obj, zap->zap_m.zap_num_entries);
 			*zapp = zap;
-			int err = mzap_upgrade(zapp, tag, tx, 0);
+			err = mzap_upgrade(zapp, tag, tx, 0);
 			if (err != 0)
 				rw_exit(&zap->zap_rwlock);
 			return (err);
 		}
-		VERIFY0(dmu_object_set_blocksize(os, obj, newsz, 0, tx));
+		err = dmu_object_set_blocksize(os, obj, newsz, 0, tx);
+		if (err && SPA_EXITING(os->os_spa)) {
+			rw_exit(&zap->zap_rwlock);
+			return (SET_ERROR(EIO));
+		}
+		VERIFY0(err);
 		zap->zap_m.zap_num_chunks =
 		    db->db_size / MZAP_ENT_LEN - 1;
 
@@ -808,14 +819,17 @@ mzap_upgrade(zap_t **zapp, const void *tag, dmu_tx_t *tx, zap_flags_t flags)
 		    mze->mze_name, (u_longlong_t)mze->mze_value);
 		zap_name_init_str(zn, mze->mze_name, 0);
 		/* If we fail here, we would end up losing entries */
-		VERIFY0(fzap_add_cd(zn, 8, 1, &mze->mze_value, mze->mze_cd,
-		    tag, tx));
+		err = fzap_add_cd(zn, 8, 1, &mze->mze_value, mze->mze_cd,
+		    tag, tx);
+		if (err && SPA_EXITING(zap->zap_objset->os_spa))
+			break;
+		VERIFY0(err);
 		zap = zn->zn_zap;	/* fzap_add_cd() may change zap */
 	}
 	zap_name_free(zn);
 	vmem_free(mzp, sz);
 	*zapp = zap;
-	return (0);
+	return (err);
 }
 
 /*
@@ -839,10 +853,19 @@ int
 mzap_create_impl(dnode_t *dn, int normflags, zap_flags_t flags, dmu_tx_t *tx)
 {
 	dmu_buf_t *db;
+	spa_t *spa = dn->dn_objset->os_spa;
+	int err = 0;
 
-	VERIFY0(dmu_buf_hold_by_dnode(dn, 0, FTAG, &db, DMU_READ_NO_PREFETCH));
+	err = dmu_buf_hold_by_dnode(dn, 0, FTAG, &db, DMU_READ_NO_PREFETCH);
+	if (err && SPA_EXITING(spa))
+		return (err);
+	VERIFY0(err);
 
 	dmu_buf_will_dirty(db, tx);
+	if (SPA_EXITING(spa)) {
+		dmu_buf_rele(db, FTAG);
+		return (SET_ERROR(EIO));
+	}
 	mzap_phys_t *zp = db->db_data;
 	zp->mz_block_type = ZBT_MICRO;
 	zp->mz_salt =
@@ -853,15 +876,26 @@ mzap_create_impl(dnode_t *dn, int normflags, zap_flags_t flags, dmu_tx_t *tx)
 		zap_t *zap;
 		/* Only fat zap supports flags; upgrade immediately. */
 		VERIFY(dnode_add_ref(dn, FTAG));
-		VERIFY0(zap_lockdir_impl(dn, db, FTAG, tx, RW_WRITER,
-		    B_FALSE, B_FALSE, &zap));
-		VERIFY0(mzap_upgrade(&zap, FTAG, tx, flags));
+
+		err = zap_lockdir_impl(dn, db, FTAG, tx, RW_WRITER,
+		    B_FALSE, B_FALSE, &zap);
+		if (err && SPA_EXITING(spa)) {
+			dnode_rele(dn, FTAG);
+			dmu_buf_rele(db, FTAG);
+			return (err);
+		}
+		VERIFY0(err);
+
+		err = mzap_upgrade(&zap, FTAG, tx, flags);
+		if (!SPA_EXITING(spa))
+			VERIFY0(err);
+
 		zap_unlockdir(zap, FTAG);
 	} else {
 		dmu_buf_rele(db, FTAG);
 	}
 
-	return (0);
+	return (err);
 }
 
 static int
