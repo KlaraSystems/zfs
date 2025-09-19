@@ -59,7 +59,7 @@ typedef struct spa_log_sm {
 
 int spa_ld_log_spacemaps(spa_t *);
 
-void spa_generate_syncing_log_sm(spa_t *, dmu_tx_t *);
+int spa_generate_syncing_log_sm(spa_t *, dmu_tx_t *);
 void spa_flush_metaslabs(spa_t *, dmu_tx_t *);
 void spa_sync_close_syncing_log_sm(spa_t *);
 

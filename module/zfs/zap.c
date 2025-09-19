@@ -44,6 +44,7 @@
 
 #include <sys/spa.h>
 #include <sys/dmu.h>
+#include <sys/dmu_objset.h>
 #include <sys/dnode.h>
 #include <sys/zfs_context.h>
 #include <sys/zfs_znode.h>
@@ -1088,25 +1089,32 @@ fzap_prefetch(zap_name_t *zn)
  * Helper functions for consumers.
  */
 
-uint64_t
+int
 zap_create_link(objset_t *os, dmu_object_type_t ot, uint64_t parent_obj,
-    const char *name, dmu_tx_t *tx)
+    const char *name, dmu_tx_t *tx, uint64_t *objectp)
 {
-	return (zap_create_link_dnsize(os, ot, parent_obj, name, 0, tx));
+	return (zap_create_link_dnsize(os, ot, parent_obj, name, 0, tx,
+	    objectp));
 }
 
-uint64_t
+int
 zap_create_link_dnsize(objset_t *os, dmu_object_type_t ot, uint64_t parent_obj,
-    const char *name, int dnodesize, dmu_tx_t *tx)
+    const char *name, int dnodesize, dmu_tx_t *tx, uint64_t *objectp)
 {
-	uint64_t new_obj;
+	int err = 0;
 
-	new_obj = zap_create_dnsize(os, ot, DMU_OT_NONE, 0, dnodesize, tx);
-	VERIFY(new_obj != 0);
-	VERIFY0(zap_add(os, parent_obj, name, sizeof (uint64_t), 1, &new_obj,
-	    tx));
+	err = zap_create_dnsize(os, ot, DMU_OT_NONE, 0, dnodesize, tx, objectp);
+	if (err && SPA_EXITING(os->os_spa))
+		return (err);
+	VERIFY0(err);
+	VERIFY(*objectp != 0);
+	err = zap_add(os, parent_obj, name, sizeof (uint64_t), 1, objectp,
+	    tx);
+	if (err && SPA_EXITING(os->os_spa))
+		return (err);
+	VERIFY0(err);
 
-	return (new_obj);
+	return (err);
 }
 
 int
