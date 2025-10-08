@@ -109,6 +109,11 @@ extern uint_t zfs_btree_verify_intensity;
 static const char cmdname[] = "zdb";
 uint8_t dump_opt[256];
 
+enum zdb_options {
+	ALLOCATED_OPT = 256,
+	ALLOCATION_SCANNER_OPT,
+};
+
 typedef void object_viewer_t(objset_t *, uint64_t, void *data, size_t size);
 
 static uint64_t *zopt_metaslab = NULL;
@@ -9318,6 +9323,8 @@ main(int argc, char **argv)
 		{"all-reconstruction",	no_argument,		NULL, 'Y'},
 		{"livelist",		no_argument,		NULL, 'y'},
 		{"zstd-headers",	no_argument,		NULL, 'Z'},
+		{"allocation-scanner",	no_argument,		NULL,
+		    ALLOCATION_SCANNER_OPT},
 		{0, 0, 0, 0}
 	};
 
@@ -9428,6 +9435,9 @@ main(int argc, char **argv)
 		case 'x':
 			vn_dumpdir = optarg;
 			break;
+		case ALLOCATION_SCANNER_OPT:
+			(void) printf("SCD tool build works.\n");
+			return (0);
 		default:
 			usage();
 			break;

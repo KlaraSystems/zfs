@@ -7,6 +7,21 @@ This repository contains the code for running OpenZFS on Linux and FreeBSD.
 [![codecov](https://codecov.io/gh/openzfs/zfs/branch/master/graph/badge.svg)](https://codecov.io/gh/openzfs/zfs)
 [![coverity](https://scan.coverity.com/projects/1973/badge.svg)](https://scan.coverity.com/projects/openzfs-zfs)
 
+# SCD tool
+
+Build:
+
+  * Build host's OS version must match the target host(s)
+  * `git clean -fdx`
+  * `sh autogen.sh`
+  * `./configure --enable-debug --enable-debuginfo --with-config=user`
+  * `make`
+
+Distribution and execution:
+
+  * Upload the entire source directory including the build artifacts to the target host (~230MB)
+  * Run the tool as `./scd`
+
 # Official Resources
 
   * [Documentation](https://openzfs.github.io/openzfs-docs/) - for using and developing this repo
