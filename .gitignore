@@ -23,6 +23,7 @@
 !man
 !module
 !rpm
+!scd
 !scripts
 !tests
 !udev
