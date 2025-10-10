@@ -20,7 +20,7 @@ Build:
 Distribution and execution:
 
   * Upload the entire source directory including the build artifacts to the target host (~230MB)
-  * Run the tool as `./scd`
+  * Run the tool as `./scd` using root or as `sudo ./scd`
 
 # Official Resources
 

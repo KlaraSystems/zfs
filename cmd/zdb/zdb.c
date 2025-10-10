@@ -34,7 +34,7 @@
  *     under sponsorship from the FreeBSD Foundation.
  * Copyright (c) 2021 Allan Jude
  * Copyright (c) 2021 Toomas Soome <tsoome@me.com>
- * Copyright (c) 2023, 2024, Klara Inc.
+ * Copyright (c) 2023, 2024, 2025, Klara Inc.
  * Copyright (c) 2023, Rob Norris <robn@despairlabs.com>
  */
 
@@ -107,7 +107,7 @@ extern uint_t zfs_reconstruct_indirect_combinations_max;
 extern uint_t zfs_btree_verify_intensity;
 
 static const char cmdname[] = "zdb";
-uint8_t dump_opt[256];
+uint8_t dump_opt[512];
 
 enum zdb_options {
 	ALLOCATED_OPT = 256,
@@ -5649,6 +5649,16 @@ typedef struct zdb_cb {
 	boolean_t	zcb_brt_is_active;
 } zdb_cb_t;
 
+typedef struct zdb_scd {
+	uint64_t	ignored_errors;
+	uint64_t	overlaps;
+	uint64_t	blkptrs;
+	uint64_t	blkreuses;
+	struct {
+		zfs_range_tree_t **metaslab_rt;
+	} *tvdevs;
+} zdb_scd_t;
+
 /* test if two DVA offsets from same vdev are within the same metaslab */
 static boolean_t
 same_metaslab(spa_t *spa, uint64_t vdev, uint64_t off1, uint64_t off2)
@@ -7453,6 +7463,199 @@ dump_block_stats(spa_t *spa)
 	return (0);
 }
 
+static void
+zdb_scd_rt_add(zfs_range_tree_t *rt, uint64_t start, uint64_t end,
+    zfs_range_seg_t *rs)
+{
+	zfs_range_seg_max_t rsearch;
+
+	if (rs == NULL) {
+		zfs_rs_set_start(&rsearch, rt, start);
+		zfs_rs_set_end(&rsearch, rt, end);
+		rs = zfs_btree_find(&rt->rt_root, &rsearch,
+		    NULL);
+	}
+
+	if (rs == NULL) {
+		zfs_range_tree_add(rt, start, (end - start));
+		return;
+	}
+
+	/* Add non-overlapping chunks */
+	uint64_t rstart = zfs_rs_get_start(rs, rt);
+	uint64_t rend = zfs_rs_get_end(rs, rt);
+	if (rstart > start)
+		zdb_scd_rt_add(rt, start, rstart - start, NULL);
+	if (rend < end)
+		zdb_scd_rt_add(rt, rend, end - rend, NULL);
+}
+
+static int
+zdb_scd_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
+    const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
+{
+	zdb_scd_t *scd = arg;
+	dmu_object_type_t type;
+	zfs_range_seg_max_t rsearch;
+	(void) zilog, (void) dnp;
+
+#ifdef IGORO_DEBUG
+	(void) printf("bp=%p: type=%d\tos=%lu\to=%lu\tlvl=%ld\tblkid=%lu\n", bp, type, zb->zb_objset, zb->zb_object, zb->zb_level, zb->zb_blkid);
+#endif
+
+	if (zb->zb_level == ZB_DNODE_LEVEL)
+		return (0);
+	if (BP_IS_HOLE(bp) || BP_IS_REDACTED(bp))
+		return (0);
+
+	type = BP_GET_TYPE(bp);
+	scd->blkptrs++;
+
+	for (int i = 0; i < BP_GET_NDVAS(bp); i++) {
+		const dva_t *dva = &bp->blk_dva[i];
+		const uint64_t vdev_id = DVA_GET_VDEV(dva);
+		const uint64_t offset  = DVA_GET_OFFSET(dva);
+		const uint64_t asize = DVA_GET_ASIZE(dva);
+#ifdef IGORO_DEBUG
+		(void) printf("\tbp=%p: vdev_id=%lu offset=%lu asize=%lu\n", bp, vdev_id, offset, asize);
+#endif
+		vdev_t *tvd = vdev_lookup_top(spa, vdev_id);
+		const uint64_t ms_id = offset >> tvd->vdev_ms_shift;
+
+		if (ms_id >= tvd->vdev_ms_count) {
+			(void) printf("ERROR: bp=%p type=%d os=%lu o=%lu"
+			    " lvl=%ld blkid=%lu vdev_id=%lu ms_id=%lu offset=%lu"
+			    " asize=%lu: ms_id > vdev_ms_count=%lu\n", bp, type,
+			    zb->zb_objset, zb->zb_object, zb->zb_level,
+			    zb->zb_blkid, vdev_id, ms_id, offset, asize,
+			    tvd->vdev_ms_count);
+			scd->ignored_errors++;
+			continue;
+		}
+
+		zfs_range_tree_t *rt = scd->tvdevs[tvd->vdev_id]
+		    .metaslab_rt[ms_id];
+		const uint64_t start = offset;
+		const uint64_t end = start + asize;
+		zfs_rs_set_start(&rsearch, rt, start);
+		zfs_rs_set_end(&rsearch, rt, end);
+		zfs_range_seg_t *rs = zfs_btree_find(&rt->rt_root, &rsearch, NULL);
+		if (rs == NULL) {
+			zfs_range_tree_add(rt, offset, asize);
+			continue;
+		}
+		uint64_t rstart = zfs_rs_get_start(rs, rt);
+		uint64_t rend = zfs_rs_get_end(rs, rt);
+		arc_buf_t *buf = NULL;
+		uint32_t flags = ARC_FLAG_WAIT;
+		int err = arc_read(NULL, spa, bp, NULL, &buf,
+		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL, &flags, zb);
+		if (buf)
+			arc_buf_destroy(buf, &buf);
+		if (err == 0) {
+			scd->blkreuses++;
+			continue;
+		}
+		if (err != ECKSUM) {
+			(void) printf("ERROR: bp=%p type=%d os=%lu o=%lu"
+			    " lvl=%ld blkid=%lu vdev_id=%lu ms_id=%lu offset=%lu"
+			    " asize=%lu: zio_read_phys() failed with err=%d\n",
+			    bp, type, zb->zb_objset, zb->zb_object,
+			    zb->zb_level, zb->zb_blkid, vdev_id, ms_id, offset,
+			    asize, err);
+			scd->ignored_errors++;
+			continue;
+		}
+		(void) printf("OVERLAP: bp=%p type=%d os=%lu "
+		    "o=%lu lvl=%ld blkid=%lu vdev_id=%lu "
+		    "ms_id=%lu offset=%lu asize=%lu "
+		    "(with offset=%lu size=%lu)\n", bp,
+		    type, zb->zb_objset, zb->zb_object,
+		    zb->zb_level, zb->zb_blkid, vdev_id, ms_id,
+		    offset, asize, rstart, (rend - rstart));
+		zdb_scd_rt_add(rt, start, end, rs);
+		scd->overlaps++;
+	}
+
+	return (0);
+}
+
+/* Spacemap Corruption Detection */
+static int
+zdb_scd_main(spa_t *spa)
+{
+	const uint64_t tvdev_count = spa->spa_root_vdev->vdev_children;
+	zdb_scd_t *scd;
+	int rc = 0;
+	int flags = TRAVERSE_PRE | TRAVERSE_PREFETCH_METADATA |
+	    TRAVERSE_NO_DECRYPT | TRAVERSE_HARD | TRAVERSE_PREFETCH_DATA;
+
+	(void) printf("\nSpacemap Corruption Detection: BEGIN\n");
+
+	scd = umem_zalloc(sizeof (zdb_scd_t), UMEM_NOFAIL);
+	scd->tvdevs = umem_zalloc(sizeof (*scd->tvdevs) * tvdev_count, UMEM_NOFAIL);
+	for (int c = 0; c < tvdev_count; c++) {
+		vdev_t *tvd = spa->spa_root_vdev->vdev_child[c];
+		scd->tvdevs[c].metaslab_rt = umem_zalloc(
+		    sizeof (*scd->tvdevs[c].metaslab_rt) * tvd->vdev_ms_count,
+		    UMEM_NOFAIL);
+		for (uint64_t m = 0; m < tvd->vdev_ms_count; m++) {
+			scd->tvdevs[c].metaslab_rt[m] =
+			    zfs_range_tree_create_flags(NULL, ZFS_RANGE_SEG64,
+			    NULL, 0, 0, 0, "tvdev.metaslab_rt");
+		}
+	}
+
+	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
+	rc = traverse_pool(spa, 0, flags, zdb_scd_blkptr_cb, scd);
+	spa_config_exit(spa, SCL_CONFIG, FTAG);
+
+	for (int c = 0; c < tvdev_count; c++) {
+		vdev_t *tvd = spa->spa_root_vdev->vdev_child[c];
+		char namebuf[64] = { 0 };
+		if (tvd->vdev_path == NULL) {
+			if (!tvd->vdev_ops->vdev_op_leaf) {
+				snprintf(namebuf, sizeof (namebuf),
+				    "%s-%llu",
+				    tvd->vdev_ops->vdev_op_type,
+				    (u_longlong_t)tvd->vdev_id);
+			}
+		} else {
+			strlcpy(namebuf, tvd->vdev_path, sizeof (namebuf));
+		}
+		(void) printf("vdev %s:\n", namebuf);
+		for (uint64_t m = 0; m < tvd->vdev_ms_count; m++) {
+			zfs_range_tree_t *rt = scd->tvdevs[c].metaslab_rt[m];
+			(void) printf("\tmetaslab %lu range tree: space=%ld "
+			    "segs=%ld min=%ld max=%ld\n", m,
+			    zfs_range_tree_space(rt),
+			    zfs_range_tree_numsegs(rt),
+			    zfs_range_tree_min(rt),
+			    zfs_range_tree_max(rt));
+		}
+	}
+
+	(void) printf("\nSpacemap Corruption Detection: END "
+	    "(ignored_errors=%lu, overlaps=%lu, blkptrs=%lu, "
+	    "blkreuses=%lu, rc=%d)\n", scd->ignored_errors,
+	    scd->overlaps, scd->blkptrs, scd->blkreuses, rc);
+
+	for (int c = 0; c < tvdev_count; c++) {
+		vdev_t *tvd = spa->spa_root_vdev->vdev_child[c];
+		for (uint64_t i = 0; i < tvd->vdev_ms_count; i++) {
+			zfs_range_tree_vacate(scd->tvdevs[c].metaslab_rt[i],
+			    NULL, NULL);
+			zfs_range_tree_destroy(scd->tvdevs[c].metaslab_rt[i]);
+		}
+		umem_free(scd->tvdevs[c].metaslab_rt,
+		    sizeof (*scd->tvdevs[c].metaslab_rt) * tvd->vdev_ms_count);
+	}
+	umem_free(scd->tvdevs, sizeof (*scd->tvdevs) * tvdev_count);
+	umem_free(scd, sizeof (zdb_scd_t));
+
+	return (rc);
+}
+
 typedef struct zdb_ddt_entry {
 	/* key must be first for ddt_key_compare */
 	ddt_key_t	zdde_key;
@@ -8558,6 +8761,9 @@ dump_zpool(spa_t *spa)
 	if (rc == 0)
 		rc = verify_checkpoint(spa);
 
+	if (rc == 0 && dump_opt[ALLOCATION_SCANNER_OPT] > 0)
+		rc = zdb_scd_main(spa);
+
 	if (rc != 0) {
 		dump_debug_buffer();
 		zdb_exit(rc);
@@ -9355,6 +9561,7 @@ main(int argc, char **argv)
 		case 'u':
 		case 'y':
 		case 'Z':
+		case ALLOCATION_SCANNER_OPT:
 			dump_opt[c]++;
 			dump_all = 0;
 			break;
@@ -9435,9 +9642,6 @@ main(int argc, char **argv)
 		case 'x':
 			vn_dumpdir = optarg;
 			break;
-		case ALLOCATION_SCANNER_OPT:
-			(void) printf("SCD tool build works.\n");
-			return (0);
 		default:
 			usage();
 			break;
