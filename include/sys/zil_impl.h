@@ -106,6 +106,7 @@ typedef struct lwb {
 	list_t		lwb_waiters;	/* list of zil_commit_waiter's */
 	avl_tree_t	lwb_vdev_tree;	/* vdevs to flush after lwb write */
 	hrtime_t	lwb_issued_timestamp; /* when was the lwb issued? */
+	boolean_t	lwb_can_defer;	/* true if flush can be deferred */
 } lwb_t;
 
 /*

@@ -567,6 +567,7 @@ zil_alloc_lwb(zilog_t *zilog, blkptr_t *bp, boolean_t slog, uint64_t txg,
 		lwb->lwb_nused = 0;
 		lwb->lwb_sz = BP_GET_LSIZE(bp) - sizeof (zil_chain_t);
 	}
+	lwb->lwb_can_defer = B_FALSE;
 
 	mutex_enter(&zilog->zl_lock);
 	list_insert_tail(&zilog->zl_lwb_list, lwb);
@@ -1562,7 +1563,7 @@ zil_lwb_write_done(zio_t *zio)
 	lwb_t *lwb = zio->io_private;
 	spa_t *spa = zio->io_spa;
 	zilog_t *zilog = lwb->lwb_zilog;
-	lwb_t *nlwb;
+	lwb_t *nlwb = NULL;
 	void *cookie;
 	avl_tree_t *vt, *t;
 	zio_vdev_trace_t *zvt, *nzvt, zvt_search;
@@ -1585,7 +1586,17 @@ zil_lwb_write_done(zio_t *zio)
 	lwb->lwb_state = LWB_STATE_WRITE_DONE;
 	lwb->lwb_write_zio = NULL;
 	lwb->lwb_fastwrite = FALSE;
-	nlwb = list_next(&zilog->zl_lwb_list, lwb);
+
+	/*
+	 * If the next lwb has attached its write zio as a parent of this one,
+	 * then we have the option of deferring our flushes to it instead of
+	 * issuing them here.
+	 */
+	if (lwb->lwb_can_defer) {
+		nlwb = list_next(&zilog->zl_lwb_list, lwb);
+		ASSERT(nlwb);
+		ASSERT3U(nlwb->lwb_state, <, LWB_STATE_WRITE_DONE);
+	}
 	mutex_exit(&zilog->zl_lock);
 
 	/* Flushes disabled, so skip everything */
@@ -1735,6 +1746,13 @@ zil_lwb_set_zio_dependency(zilog_t *zilog, lwb_t *lwb)
 			    last_lwb_opened->lwb_write_zio);
 
 			ZIL_STAT_BUMP(zil_lwb_chain_write_count);
+
+			/*
+			 * Note that the previous lwb now has a parent that
+			 * will block on its completion, and so its safe to
+			 * defer flushes to it if necessary.
+			 */
+			last_lwb_opened->lwb_can_defer = B_TRUE;
 		}
 	}
 }
