@@ -339,6 +339,14 @@ static int zfs_metaslab_try_hard_before_gang = B_FALSE;
  */
 static uint_t zfs_metaslab_find_max_tries = 100;
 
+int      zfs_scd_enabled = B_FALSE;
+uint64_t zfs_scd_area_vdev_id = 0;
+uint64_t zfs_scd_area_ms_id = 5;
+uint64_t zfs_scd_area_base = 1 * 1048576;
+uint64_t zfs_scd_injecting_asize_threshold = 1 * 1048576;
+uint64_t zfs_scd_inject_offset = 0;
+uint64_t zfs_scd_injects = 0;
+
 static uint64_t metaslab_weight(metaslab_t *, boolean_t);
 static void metaslab_set_fragmentation(metaslab_t *, boolean_t);
 static void metaslab_free_impl(vdev_t *, uint64_t, uint64_t, boolean_t);
@@ -5327,6 +5335,35 @@ top:
 		uint64_t offset = metaslab_group_alloc(mg, zal, asize, txg,
 		    !try_hard, dva, d, allocator, try_hard);
 
+		if (!zfs_scd_enabled || offset == -1ULL)
+			goto skip_overlap;
+		boolean_t within_scd_area = B_FALSE;
+		if (vd->vdev_id == zfs_scd_area_vdev_id) {
+			const uint64_t this_ms = zfs_scd_area_ms_id << vd->vdev_ms_shift;
+			const uint64_t next_ms = (zfs_scd_area_ms_id + 1) << vd->vdev_ms_shift;
+			within_scd_area = (this_ms <= offset && offset < next_ms);
+		}
+		if (zfs_scd_injects > 0 && asize >= zfs_scd_injecting_asize_threshold) {
+			DVA_SET_VDEV(&dva[d], zfs_scd_area_vdev_id);
+			const vdev_t *avd = vdev_lookup_top(spa, zfs_scd_area_vdev_id);
+			offset = (zfs_scd_area_ms_id << avd->vdev_ms_shift) +
+			    zfs_scd_area_base + zfs_scd_inject_offset;
+			DVA_SET_OFFSET(&dva[d], offset);
+			DVA_SET_GANG(&dva[d],
+			    ((flags & METASLAB_GANG_HEADER) ? 1 : 0));
+			DVA_SET_ASIZE(&dva[d], asize);
+			zfs_scd_injects--;
+			cmn_err(CE_NOTE, "SCD INJECTED: vdev_id=%llu "
+			    "offset=%llu asize=%llu",
+			    (u_longlong_t) zfs_scd_area_vdev_id,
+			    (u_longlong_t) offset, (u_longlong_t) asize);
+			return (0);
+
+		} else if (within_scd_area) {
+			goto next;
+		}
+skip_overlap:
+
 		if (offset != -1ULL) {
 			/*
 			 * If we've just selected this metaslab group,
@@ -6329,6 +6366,14 @@ ZFS_MODULE_PARAM(zfs_metaslab, zfs_metaslab_, try_hard_before_gang, INT,
 
 ZFS_MODULE_PARAM(zfs_metaslab, zfs_metaslab_, find_max_tries, UINT, ZMOD_RW,
 	"Normally only consider this many of the best metaslabs in each vdev");
+
+ZFS_MODULE_PARAM(zfs, zfs_scd_, enabled, INT, ZMOD_RW, "I wanna ruin my pools");
+ZFS_MODULE_PARAM(zfs, zfs_scd_, area_vdev_id, U64, ZMOD_RW, "");
+ZFS_MODULE_PARAM(zfs, zfs_scd_, area_ms_id, U64, ZMOD_RW, "");
+ZFS_MODULE_PARAM(zfs, zfs_scd_, area_base, U64, ZMOD_RW, "");
+ZFS_MODULE_PARAM(zfs, zfs_scd_, injecting_asize_threshold, U64, ZMOD_RW, "");
+ZFS_MODULE_PARAM(zfs, zfs_scd_, inject_offset, U64, ZMOD_RW, "");
+ZFS_MODULE_PARAM(zfs, zfs_scd_, injects, U64, ZMOD_RW, "");
 
 ZFS_MODULE_PARAM_CALL(zfs, zfs_, active_allocator,
 	param_set_active_allocator, param_get_charp, ZMOD_RW,
