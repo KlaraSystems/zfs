@@ -120,6 +120,10 @@ static zil_kstat_values_t zil_stats = {
 	{ "zil_itx_metaslab_slog_bytes",	KSTAT_DATA_UINT64 },
 	{ "zil_itx_metaslab_slog_write",	KSTAT_DATA_UINT64 },
 	{ "zil_itx_metaslab_slog_alloc",	KSTAT_DATA_UINT64 },
+	{ "zil_lwb_open_count",			KSTAT_DATA_UINT64 },
+	{ "zil_lwb_chain_count",		KSTAT_DATA_UINT64 },
+	{ "zil_lwb_chain_write_count",		KSTAT_DATA_UINT64 },
+	{ "zil_lwb_defer_flush_count",		KSTAT_DATA_UINT64 },
 };
 
 static zil_sums_t zil_sums_global;
@@ -385,6 +389,10 @@ zil_sums_init(zil_sums_t *zs)
 	wmsum_init(&zs->zil_itx_metaslab_slog_bytes, 0);
 	wmsum_init(&zs->zil_itx_metaslab_slog_write, 0);
 	wmsum_init(&zs->zil_itx_metaslab_slog_alloc, 0);
+	wmsum_init(&zs->zil_lwb_open_count, 0);
+	wmsum_init(&zs->zil_lwb_chain_count, 0);
+	wmsum_init(&zs->zil_lwb_chain_write_count, 0);
+	wmsum_init(&zs->zil_lwb_defer_flush_count, 0);
 }
 
 void
@@ -411,6 +419,10 @@ zil_sums_fini(zil_sums_t *zs)
 	wmsum_fini(&zs->zil_itx_metaslab_slog_bytes);
 	wmsum_fini(&zs->zil_itx_metaslab_slog_write);
 	wmsum_fini(&zs->zil_itx_metaslab_slog_alloc);
+	wmsum_fini(&zs->zil_lwb_open_count);
+	wmsum_fini(&zs->zil_lwb_chain_count);
+	wmsum_fini(&zs->zil_lwb_chain_write_count);
+	wmsum_fini(&zs->zil_lwb_defer_flush_count);
 }
 
 void
@@ -458,6 +470,14 @@ zil_kstat_values_update(zil_kstat_values_t *zs, zil_sums_t *zil_sums)
 	    wmsum_value(&zil_sums->zil_itx_metaslab_slog_write);
 	zs->zil_itx_metaslab_slog_alloc.value.ui64 =
 	    wmsum_value(&zil_sums->zil_itx_metaslab_slog_alloc);
+	zs->zil_lwb_open_count.value.ui64 =
+	    wmsum_value(&zil_sums->zil_lwb_open_count);
+	zs->zil_lwb_chain_count.value.ui64 =
+	    wmsum_value(&zil_sums->zil_lwb_chain_count);
+	zs->zil_lwb_chain_write_count.value.ui64 =
+	    wmsum_value(&zil_sums->zil_lwb_chain_write_count);
+	zs->zil_lwb_defer_flush_count.value.ui64 =
+	    wmsum_value(&zil_sums->zil_lwb_defer_flush_count);
 }
 
 /*
@@ -1608,6 +1628,8 @@ zil_lwb_write_done(zio_t *zio)
 		ASSERT3S(nlwb->lwb_state, !=, LWB_STATE_WRITE_DONE);
 		ASSERT3S(nlwb->lwb_state, !=, LWB_STATE_FLUSH_DONE);
 
+		ZIL_STAT_BUMP(zilog, zil_lwb_defer_flush_count);
+
 		/* Copy the trace records to the next lwb. */
 		mutex_enter(&nlwb->lwb_vdev_lock);
 		zio_vdev_trace_copy(&zio->io_vdev_trace_tree,
@@ -1671,12 +1693,14 @@ zil_lwb_set_zio_dependency(zilog_t *zilog, lwb_t *lwb)
 	if (prev_lwb->lwb_state == LWB_STATE_ISSUED) {
 		ASSERT3P(prev_lwb->lwb_write_zio, !=, NULL);
 		zio_add_child(lwb->lwb_write_zio, prev_lwb->lwb_write_zio);
+		ZIL_STAT_BUMP(zilog, zil_lwb_chain_write_count);
 	} else {
 		ASSERT3S(prev_lwb->lwb_state, ==, LWB_STATE_WRITE_DONE);
 	}
 
 	ASSERT3P(prev_lwb->lwb_root_zio, !=, NULL);
 	zio_add_child(lwb->lwb_root_zio, prev_lwb->lwb_root_zio);
+	ZIL_STAT_BUMP(zilog, zil_lwb_chain_count);
 }
 
 
@@ -1698,6 +1722,7 @@ zil_lwb_write_open(zilog_t *zilog, lwb_t *lwb)
 	mutex_enter(&zilog->zl_lock);
 	lwb->lwb_state = LWB_STATE_OPENED;
 	zilog->zl_last_lwb_opened = lwb;
+	ZIL_STAT_BUMP(zilog, zil_lwb_open_count);
 	mutex_exit(&zilog->zl_lock);
 }
 

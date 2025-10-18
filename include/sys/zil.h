@@ -544,6 +544,11 @@ typedef struct zil_stats {
 	kstat_named_t zil_itx_metaslab_slog_bytes;
 	kstat_named_t zil_itx_metaslab_slog_write;
 	kstat_named_t zil_itx_metaslab_slog_alloc;
+
+	kstat_named_t zil_lwb_open_count;
+	kstat_named_t zil_lwb_chain_count;
+	kstat_named_t zil_lwb_chain_write_count;
+	kstat_named_t zil_lwb_defer_flush_count;
 } zil_kstat_values_t;
 
 typedef struct zil_sums {
@@ -568,6 +573,10 @@ typedef struct zil_sums {
 	wmsum_t zil_itx_metaslab_slog_bytes;
 	wmsum_t zil_itx_metaslab_slog_write;
 	wmsum_t zil_itx_metaslab_slog_alloc;
+	wmsum_t zil_lwb_open_count;
+	wmsum_t zil_lwb_chain_count;
+	wmsum_t zil_lwb_chain_write_count;
+	wmsum_t zil_lwb_defer_flush_count;
 } zil_sums_t;
 
 #define	ZIL_STAT_INCR(zil, stat, val) \
