@@ -108,6 +108,10 @@ zil_stats_t zil_stats = {
 	{ "zil_itx_metaslab_normal_bytes",	KSTAT_DATA_UINT64 },
 	{ "zil_itx_metaslab_slog_count",	KSTAT_DATA_UINT64 },
 	{ "zil_itx_metaslab_slog_bytes",	KSTAT_DATA_UINT64 },
+	{ "zil_lwb_open_count",			KSTAT_DATA_UINT64 },
+	{ "zil_lwb_chain_count",		KSTAT_DATA_UINT64 },
+	{ "zil_lwb_chain_write_count",		KSTAT_DATA_UINT64 },
+	{ "zil_lwb_defer_flush_count",		KSTAT_DATA_UINT64 },
 };
 
 static kstat_t *zil_ksp;
@@ -1633,6 +1637,8 @@ zil_lwb_write_done(zio_t *zio)
 	}
 
 	if (defer) {
+		ZIL_STAT_BUMP(zil_lwb_defer_flush_count);
+
 		/*
 		 * If we're deferring, copy any remaining vdev nodes to the
 		 * next lwb. There might still be some here if a previous
@@ -1690,6 +1696,8 @@ zil_lwb_set_zio_dependency(zilog_t *zilog, lwb_t *lwb)
 		zio_add_child(lwb->lwb_root_zio,
 		    last_lwb_opened->lwb_root_zio);
 
+		ZIL_STAT_BUMP(zil_lwb_chain_count);
+
 		/*
 		 * If the previous lwb's write hasn't already completed,
 		 * we also want to order the completion of the lwb write
@@ -1720,6 +1728,8 @@ zil_lwb_set_zio_dependency(zilog_t *zilog, lwb_t *lwb)
 			ASSERT3P(last_lwb_opened->lwb_write_zio, !=, NULL);
 			zio_add_child(lwb->lwb_write_zio,
 			    last_lwb_opened->lwb_write_zio);
+
+			ZIL_STAT_BUMP(zil_lwb_chain_write_count);
 		}
 	}
 }
@@ -1775,6 +1785,7 @@ zil_lwb_write_open(zilog_t *zilog, lwb_t *lwb)
 		ASSERT3P(lwb->lwb_write_zio, !=, NULL);
 
 		lwb->lwb_state = LWB_STATE_OPENED;
+		ZIL_STAT_BUMP(zil_lwb_open_count);
 
 		zil_lwb_set_zio_dependency(zilog, lwb);
 		zilog->zl_last_lwb_opened = lwb;

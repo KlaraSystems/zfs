@@ -454,6 +454,11 @@ typedef struct zil_stats {
 	 */
 	kstat_named_t zil_itx_metaslab_slog_count;
 	kstat_named_t zil_itx_metaslab_slog_bytes;
+
+	kstat_named_t zil_lwb_open_count;
+	kstat_named_t zil_lwb_chain_count;
+	kstat_named_t zil_lwb_chain_write_count;
+	kstat_named_t zil_lwb_defer_flush_count;
 } zil_stats_t;
 
 extern zil_stats_t zil_stats;
