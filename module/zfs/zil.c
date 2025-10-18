@@ -136,6 +136,8 @@ int zil_nocacheflush = 0;
  */
 unsigned long zil_slog_bulk = 768 * 1024;
 
+unsigned long zil_lwb_chain_write_pct = 100;
+
 static kmem_cache_t *zil_lwb_cache;
 static kmem_cache_t *zil_zcw_cache;
 
@@ -1721,7 +1723,10 @@ zil_lwb_set_zio_dependency(zilog_t *zilog, lwb_t *lwb)
 		 * vdevs are flushed in the lwb write zio's completion
 		 * handler, zil_lwb_write_done()).
 		 */
-		if (last_lwb_opened->lwb_state != LWB_STATE_WRITE_DONE) {
+		if (last_lwb_opened->lwb_state != LWB_STATE_WRITE_DONE && (
+		    zil_lwb_chain_write_pct == 100 ||
+		    (zil_lwb_chain_write_pct != 0 &&
+		     random_in_range(100) < zil_lwb_chain_write_pct))) {
 			ASSERT(last_lwb_opened->lwb_state == LWB_STATE_OPENED ||
 			    last_lwb_opened->lwb_state == LWB_STATE_ISSUED);
 
@@ -4469,4 +4474,8 @@ ZFS_MODULE_PARAM(zfs_zil, zil_, slog_bulk, ULONG, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs_zil, zil_, maxblocksize, INT, ZMOD_RW,
 	"Limit in bytes of ZIL log block size");
+
+ZFS_MODULE_PARAM(zfs_zil, zil_, lwb_chain_write_pct, ULONG, ZMOD_RW,
+	"When possible, percentage of LWB writes that will be chained to next");
+
 /* END CSTYLED */
