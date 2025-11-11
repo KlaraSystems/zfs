@@ -9160,8 +9160,8 @@ top:
 			/*
 			 * Trim the space to be evicted.
 			 */
-			if (vd->vdev_has_trim && dev->l2ad_evict < taddr &&
-			    l2arc_trim_ahead > 0) {
+			if (vd != NULL && vd->vdev_has_trim &&
+			    dev->l2ad_evict < taddr && l2arc_trim_ahead > 0) {
 				/*
 				 * We have to drop the spa_config lock because
 				 * vdev_trim_range() will acquire it.
