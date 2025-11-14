@@ -1388,8 +1388,8 @@ zvol_apply_lockout(zvol_state_t *zv, uint64_t lockout)
 
 	cmn_err(CE_NOTE,
 	    "zv_apply_lockout: %llu lockout changed from %llu to %llu",
-	    dmu_objset_id(zv->zv_objset),
-	    (uint64_t)old_lockout, (uint64_t)lockout);
+	    (u_longlong_t)dmu_objset_id(zv->zv_objset),
+	    (u_longlong_t)old_lockout, (u_longlong_t)lockout);
 }
 
 typedef struct minors_job {
