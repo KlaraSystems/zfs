@@ -1240,7 +1240,7 @@ zfsvfs_apply_lockout(zfsvfs_t *zfsvfs, lockout_t lockout)
 
 	cmn_err(CE_NOTE,
 	    "zfsvfs_apply_lockout: %llu lockout changed from %d to %d",
-	    dmu_objset_id(zfsvfs->z_os), old_lockout, lockout);
+	    (unsigned long long)dmu_objset_id(zfsvfs->z_os), old_lockout, lockout);
 }
 
 void
