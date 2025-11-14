@@ -59,21 +59,36 @@ typedef struct zio_eck {
 
 /*
  * Gang block headers are self-checksumming and contain an array
- * of block pointers.
+ * of block pointers. The old gang block size has enough room for 3 blkptrs,
+ * while new gang blocks can store more.
+ *
+ * Layout:
+ * +--------+--------+--------+-----+---------+-----------+
+ * |        |        |        |     |         |           |
+ * | blkptr | blkptr | blkptr | ... | padding | zio_eck_t |
+ * |   1    |   2    |   3    |     |         |           |
+ * +--------+--------+--------+-----+---------+-----------+
+ *   128B     128B     128B             88B        40B
  */
-#define	SPA_GANGBLOCKSIZE	SPA_MINBLOCKSIZE
-#define	SPA_GBH_NBLKPTRS	((SPA_GANGBLOCKSIZE - \
-	sizeof (zio_eck_t)) / sizeof (blkptr_t))
-#define	SPA_GBH_FILLER		((SPA_GANGBLOCKSIZE - \
-	sizeof (zio_eck_t) - \
-	(SPA_GBH_NBLKPTRS * sizeof (blkptr_t))) /\
-	sizeof (uint64_t))
+#define	SPA_OLD_GANGBLOCKSIZE	SPA_MINBLOCKSIZE
+typedef void zio_gbh_phys_t;
 
-typedef struct zio_gbh {
-	blkptr_t		zg_blkptr[SPA_GBH_NBLKPTRS];
-	uint64_t		zg_filler[SPA_GBH_FILLER];
-	zio_eck_t		zg_tail;
-} zio_gbh_phys_t;
+static inline uint64_t
+gbh_nblkptrs(uint64_t size) {
+	ASSERT(IS_P2ALIGNED(size, sizeof (blkptr_t)));
+	return ((size - sizeof (zio_eck_t)) / sizeof (blkptr_t));
+}
+
+static inline zio_eck_t *
+gbh_eck(zio_gbh_phys_t *gbh, uint64_t size) {
+	ASSERT(IS_P2ALIGNED(size, sizeof (blkptr_t)));
+	return ((zio_eck_t *)((uintptr_t)gbh + size - sizeof (zio_eck_t)));
+}
+
+static inline blkptr_t *
+gbh_bp(zio_gbh_phys_t *gbh, int bp) {
+	return (&((blkptr_t *)gbh)[bp]);
+}
 
 enum zio_checksum {
 	ZIO_CHECKSUM_INHERIT = 0,
@@ -228,6 +243,7 @@ typedef uint64_t zio_flag_t;
 #define	ZIO_FLAG_REEXECUTED	(1ULL << 30)
 #define	ZIO_FLAG_DELEGATED	(1ULL << 31)
 #define	ZIO_FLAG_DIO_CHKSUM_ERR	(1ULL << 32)
+#define	ZIO_FLAG_PREALLOCATED	(1ULL << 33)
 
 #define	ZIO_ALLOCATOR_NONE	(-1)
 #define	ZIO_HAS_ALLOCATOR(zio)	((zio)->io_allocator != ZIO_ALLOCATOR_NONE)
@@ -351,6 +367,7 @@ typedef struct zio_prop {
 	uint8_t			zp_complevel;
 	uint8_t			zp_level;
 	uint8_t			zp_copies;
+	uint8_t			zp_gang_copies;
 	dmu_object_type_t	zp_type;
 	boolean_t		zp_dedup;
 	boolean_t		zp_dedup_verify;
@@ -398,7 +415,9 @@ typedef struct zio_vsd_ops {
 
 typedef struct zio_gang_node {
 	zio_gbh_phys_t		*gn_gbh;
-	struct zio_gang_node	*gn_child[SPA_GBH_NBLKPTRS];
+	uint64_t		gn_gangblocksize;
+	uint64_t		gn_allocsize;
+	struct zio_gang_node	*gn_child[];
 } zio_gang_node_t;
 
 typedef zio_t *zio_gang_issue_func_t(zio_t *zio, blkptr_t *bp,
@@ -582,7 +601,7 @@ extern zio_t *zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
     zio_priority_t priority, zio_flag_t flags, zbookmark_phys_t *zb);
 
 extern void zio_write_override(zio_t *zio, blkptr_t *bp, int copies,
-    boolean_t nopwrite, boolean_t brtwrite);
+    int gang_copies, boolean_t nopwrite, boolean_t brtwrite);
 
 extern void zio_free(spa_t *spa, uint64_t txg, const blkptr_t *bp);
 

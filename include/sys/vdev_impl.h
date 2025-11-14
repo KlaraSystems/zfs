@@ -60,10 +60,6 @@ extern "C" {
 typedef struct vdev_queue vdev_queue_t;
 struct abd;
 
-extern uint_t zfs_vdev_queue_depth_pct;
-extern uint_t zfs_vdev_def_queue_depth;
-extern uint_t zfs_vdev_async_write_max_active;
-
 /*
  * Virtual device operations
  */
@@ -107,7 +103,8 @@ typedef const struct vdev_ops {
 	vdev_fini_func_t		*vdev_op_fini;
 	vdev_open_func_t		*vdev_op_open;
 	vdev_close_func_t		*vdev_op_close;
-	vdev_asize_func_t		*vdev_op_asize;
+	vdev_asize_func_t		*vdev_op_psize_to_asize;
+	vdev_asize_func_t		*vdev_op_asize_to_psize;
 	vdev_min_asize_func_t		*vdev_op_min_asize;
 	vdev_min_alloc_func_t		*vdev_op_min_alloc;
 	vdev_io_start_func_t		*vdev_op_io_start;
@@ -625,11 +622,11 @@ extern vdev_ops_t vdev_indirect_ops;
  */
 extern void vdev_default_xlate(vdev_t *vd, const zfs_range_seg64_t *logical_rs,
     zfs_range_seg64_t *physical_rs, zfs_range_seg64_t *remain_rs);
+extern uint64_t vdev_default_psize(vdev_t *vd, uint64_t asize, uint64_t txg);
 extern uint64_t vdev_default_asize(vdev_t *vd, uint64_t psize, uint64_t txg);
 extern uint64_t vdev_default_min_asize(vdev_t *vd);
 extern uint64_t vdev_get_min_asize(vdev_t *vd);
 extern void vdev_set_min_asize(vdev_t *vd);
-extern uint64_t vdev_get_min_alloc(vdev_t *vd);
 extern uint64_t vdev_get_nparity(vdev_t *vd);
 extern uint64_t vdev_get_ndisks(vdev_t *vd);
 
