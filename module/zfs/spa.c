@@ -2294,7 +2294,13 @@ spa_unload_sync_time_logger(spa_t *spa)
 {
 	uint64_t txg;
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT));
+	int err = dmu_tx_assign(tx, DMU_TX_WAIT);
+
+	if (err == EAGAIN) {
+		dmu_tx_abort(tx);
+		return;
+	}
+	VERIFY0(err);
 
 	txg = dmu_tx_get_txg(tx);
 	spa_sync_time_logger(spa, txg, B_TRUE);
