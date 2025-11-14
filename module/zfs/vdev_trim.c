@@ -542,7 +542,7 @@ vdev_trim_range(trim_args_t *ta, uint64_t start, uint64_t size)
 
 	dmu_tx_t *tx = dmu_tx_create_dd(spa_get_dsl(spa)->dp_mos_dir);
 	// FIXME: use a single macro for these flags, as they are repeated often
-	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_LOCKOUT));
+	VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 	uint64_t txg = dmu_tx_get_txg(tx);
 
 	spa_config_enter(spa, SCL_STATE_ALL, vd, RW_READER);
