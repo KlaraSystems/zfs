@@ -67,7 +67,7 @@
 #include <sys/zfeature.h>
 #include <sys/qat.h>
 #include <sys/zstd/zstd.h>
-
+#include <sys/lockout.h>
 /*
  * SPA locking
  *
@@ -2083,6 +2083,14 @@ boolean_t
 spa_exiting(spa_t *spa)
 {
 	return (spa->spa_forcibly_exiting == B_TRUE);
+}
+
+boolean_t
+spa_lockout(spa_t *spa)
+{
+	if (spa->spa_dsl_pool == NULL)
+		return B_TRUE;
+	return (atomic_load_64(&spa->spa_dsl_pool->dp_lockout) == LOCKOUT_NONE);
 }
 
 uint64_t

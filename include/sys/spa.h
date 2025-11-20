@@ -1127,7 +1127,10 @@ extern boolean_t spa_suspended(spa_t *spa);
 extern void spa_initiate_forced_exit(spa_t *spa);
 extern void spa_set_forced_exit_required(spa_t *spa);
 extern boolean_t spa_exiting(spa_t *spa);
-#define	SPA_EXITING(spa) (unlikely(spa_exiting(spa)))
+extern boolean_t spa_lockout(spa_t *spa);
+#define SPA_EXITING(spa) (unlikely(spa_exiting(spa)))
+#define	SPA_LOCKOUT(spa) (unlikely(spa_lockout(spa)))
+#define	SPA_CANTWRITE(spa) (SPA_EXITING(spa) || SPA_LOCKOUT(spa))
 extern uint64_t spa_bootfs(spa_t *spa);
 extern uint64_t spa_get_last_scrubbed_txg(spa_t *spa);
 extern uint64_t spa_delegation(spa_t *spa);
