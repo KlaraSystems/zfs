@@ -113,6 +113,7 @@ enum zdb_options {
 	ALLOCATED_OPT = 256,
 	ALLOCATION_SCANNER_OPT,
 };
+static const char *scd_scope = NULL;
 
 typedef void object_viewer_t(objset_t *, uint64_t, void *data, size_t size);
 
@@ -7486,11 +7487,27 @@ typedef struct zdb_scd_tvdev {
 } zdb_scd_tvdev_t;
 
 typedef struct zdb_scd {
+	/* config */
+	struct {
+		boolean_t	enabled;
+		uint64_t	vdev_id;
+		uint64_t	ms_id;
+	} colon;
+	struct {
+		boolean_t	enabled;
+		uint64_t	mod;
+		uint64_t	step;
+	} slash;
+
 	/* global context */
 	uint64_t	blkptrs;
+	uint64_t	segments;
 	uint64_t	errors;
 	uint64_t	overlaps;
 	uint64_t	affected_blocks;
+	uint64_t	verified_segments;
+	uint64_t	affected_segments;
+	uint64_t	affected_metaslabs;
 	zdb_scd_tvdev_t *tvdevs;
 
 	/* temporary context */
@@ -7539,7 +7556,43 @@ zdb_scd_report_affected_block(zdb_scd_t *scd, const zbookmark_phys_t *zb)
 		err = zfs_obj_to_path(os, zb->zb_object, path, MAXPATHLEN * 2);
 		if (err == 0)
 			(void) printf(" of %s:%s", dsname, path);
-		// TODO: traverse it up to all datasets which include it?
+		// TODO (optional): traverse it up to all datasets which include it?
+rele:
+		dmu_objset_rele_flags(os, B_TRUE, FTAG);
+	}
+skip:
+
+	(void) printf("\n");
+}
+
+static void
+zdb_scd_report_affected_segment(zdb_scd_t *scd, zdb_scd_segment_t *seg)
+{
+	char dsname[ZFS_MAX_DATASET_NAME_LEN];
+	char path[MAXPATHLEN * 2];
+	objset_t *os;
+	int err;
+	const zbookmark_phys_t *zb = &seg->seg_src_zb;
+
+	scd->affected_segments++;
+
+	(void) printf("SCD: NOT-MARKED-AS-ALLOCATED SEGMENT { vdev_id=%lu ms_id=%lu offset=%lu asize=%lu}"
+	    " in block { os=%lu o=%lu lvl=%ld blkid=%lu }",
+	    scd->vdev_id, scd->metaslab_idx, seg->seg_offset, seg->seg_asize,
+	    zb->zb_objset, zb->zb_object, zb->zb_level, zb->zb_blkid
+	);
+
+	err = dsl_dsobj_to_dsname(scd->spa->spa_name, zb->zb_objset, dsname);
+	if (err == 0) {
+		err = dmu_objset_hold_flags(dsname, B_TRUE, FTAG, &os);
+		if (err)
+			goto skip;
+		if (dmu_objset_type(os) != DMU_OST_ZFS)
+			goto rele;
+		err = zfs_obj_to_path(os, zb->zb_object, path, MAXPATHLEN * 2);
+		if (err == 0)
+			(void) printf(" of %s:%s", dsname, path);
+		// TODO (optional): traverse it up to all datasets which include it?
 rele:
 		dmu_objset_rele_flags(os, B_TRUE, FTAG);
 	}
@@ -7597,6 +7650,7 @@ zdb_scd_process_chunk(zdb_scd_t *scd, uint64_t chunk_offset,
 		newseg->seg_birthtime = BP_GET_BIRTH(scd->bp);
 		memcpy(&newseg->seg_src_zb, scd->zb, sizeof (*scd->zb));
 		avl_insert(&scd->metaslab->segments, newseg, where);
+		scd->segments++;
 		return;
 	}
 
@@ -7637,7 +7691,7 @@ zdb_scd_print_progress(zdb_scd_t *scd)
 	static time_t latest = 0;
 	time_t now = time(NULL);
 
-#define	PRINT_EVERY_SECS	60
+#define	PRINT_EVERY_SECS	10
 	if (latest == 0)
 		latest = now;
 	if (now - latest < PRINT_EVERY_SECS)
@@ -7645,8 +7699,27 @@ zdb_scd_print_progress(zdb_scd_t *scd)
 	latest = now;
 
 	(void) fprintf(stderr, "SCD: INPROGRESS "
-	    "(blkptrs=%lu errors=%lu overlaps=%lu affected_blocks=%lu)\n",
-	    scd->blkptrs, scd->errors, scd->overlaps, scd->affected_blocks);
+	    "(blkptrs=%lu segments=%lu errors=%lu overlaps=%lu "
+	    "affected_blocks=%lu verified_segments=%lu affected_segments=%lu "
+	    "affected_metaslabs=%lu scope=%s)\n", scd->blkptrs, scd->segments,
+	    scd->errors, scd->overlaps, scd->affected_blocks,
+	    scd->verified_segments, scd->affected_segments,
+	    scd->affected_metaslabs, scd_scope ? scd_scope : "all");
+}
+
+static boolean_t
+zdb_scd_is_scoped(zdb_scd_t *scd, uint64_t vdev_id, uint64_t ms_id)
+{
+	if (scd->colon.enabled) {
+		return (vdev_id == scd->colon.vdev_id &&
+		    ms_id == scd->colon.ms_id);
+	}
+
+	if (scd->slash.enabled) {
+		return ((ms_id % scd->slash.step + 1) == scd->slash.mod);
+	}
+
+	return (B_TRUE);
 }
 
 static int
@@ -7676,6 +7749,9 @@ zdb_scd_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 		scd->asize = DVA_GET_ASIZE(dva);
 		vdev_t *tvd = vdev_lookup_top(spa, scd->vdev_id);
 		scd->metaslab_idx = scd->offset >> tvd->vdev_ms_shift;
+		if (DVA_GET_GANG(dva)) {
+			scd->asize = sizeof(zio_gbh_phys_t);
+		}
 
 		if (scd->metaslab_idx >= tvd->vdev_ms_count) {
 			(void) printf("SCD: ERROR in {os=%lu o=%lu "
@@ -7688,12 +7764,121 @@ zdb_scd_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 			continue;
 		}
 
+		if (!zdb_scd_is_scoped(scd, scd->vdev_id, scd->metaslab_idx))
+			continue;
+
 		scd->metaslab = &scd->tvdevs[tvd->vdev_id]
 		    .metaslabs[scd->metaslab_idx];
 		zdb_scd_process_chunk(scd, scd->offset, scd->asize, NULL);
 	}
 
 	return (0);
+}
+
+static int
+zdb_scd_compare_spacemaps(spa_t *spa, zdb_scd_t *scd)
+{
+	int rc = 0;
+
+	sublivelist_verify_t sv;
+	zfs_btree_create(&sv.sv_leftover, livelist_block_compare, NULL,
+	    sizeof (sublivelist_verify_block_t));
+	iterate_deleted_livelists(spa, livelist_verify, &sv);
+
+	vdev_t *rvd = spa->spa_root_vdev;
+	for (uint64_t c = 0; c < rvd->vdev_children; c++) {
+		vdev_t *vd = rvd->vdev_child[c];
+
+		if (!vdev_is_concrete(vd))
+			continue;
+
+		scd->vdev_id = c;
+		for (uint64_t mid = 0; mid < vd->vdev_ms_count; mid++) {
+			scd->metaslab_idx = mid;
+			scd->metaslab = scd->tvdevs[c].metaslabs + mid;
+			metaslab_t *m = vd->vdev_ms[mid];
+			boolean_t affected_metaslab = B_FALSE;
+
+			if (!zdb_scd_is_scoped(scd, c, mid))
+				continue;
+
+			metaslab_verify_t mv;
+			mv.mv_allocated = zfs_range_tree_create_flags(
+			    NULL, ZFS_RANGE_SEG64, NULL, 0, 0,
+			    0, "zdb_scd_compare_spacemaps:mv_allocated");
+			mv.mv_vdid = vd->vdev_id;
+			mv.mv_msid = m->ms_id;
+			mv.mv_start = m->ms_start;
+			mv.mv_end = m->ms_start + m->ms_size;
+			zfs_btree_create(&mv.mv_livelist_allocs,
+			    livelist_block_compare, NULL,
+			    sizeof (sublivelist_verify_block_t));
+
+			mv_populate_livelist_allocs(&mv, &sv);
+
+			spacemap_check_ms_sm(m->ms_sm, &mv);
+			spacemap_check_sm_log(spa, &mv);
+
+			zfs_range_tree_t *rt = mv.mv_allocated;
+			avl_tree_t *segs = &scd->metaslab->segments;
+			zdb_scd_segment_t *seg = avl_first(segs);
+			for (; seg != NULL; seg = AVL_NEXT(segs, seg)) {
+				zdb_scd_print_progress(scd);
+				scd->verified_segments++;
+
+				zfs_range_seg_max_t rsearch;
+				zfs_rs_set_start(&rsearch, rt, seg->seg_offset);
+				zfs_rs_set_end(&rsearch, rt,
+				    seg->seg_offset + seg->seg_asize);
+				uint64_t rstart, rend;
+				zfs_btree_index_t where, where_nearest;
+				zfs_range_seg_t *rs = zfs_btree_find(
+				    &rt->rt_root, &rsearch, &where);
+				if (rs != NULL) {
+					rstart = zfs_rs_get_start(rs, rt);
+					rend = zfs_rs_get_end(rs, rt);
+					if (rstart <= seg->seg_offset &&
+					    (seg->seg_offset + seg->seg_asize)
+					    <= rend)
+						continue;
+				}
+				rs = zfs_btree_prev(&rt->rt_root, &where,
+				    &where_nearest);
+				if (rs != NULL) {
+					rstart = zfs_rs_get_start(rs, rt);
+					rend = zfs_rs_get_end(rs, rt);
+					if (rstart <= seg->seg_offset &&
+					    (seg->seg_offset + seg->seg_asize)
+					    <= rend)
+						continue;
+				}
+				rs = zfs_btree_next(&rt->rt_root, &where,
+				    &where_nearest);
+				if (rs != NULL) {
+					rstart = zfs_rs_get_start(rs, rt);
+					rend = zfs_rs_get_end(rs, rt);
+					if (rstart <= seg->seg_offset &&
+					    (seg->seg_offset + seg->seg_asize)
+					    <= rend)
+						continue;
+				}
+				zdb_scd_report_affected_segment(scd, seg);
+				if (!affected_metaslab) {
+					scd->affected_metaslabs++;
+					affected_metaslab = B_TRUE;
+				}
+			}
+
+			zfs_range_tree_vacate(mv.mv_allocated, NULL, NULL);
+			zfs_range_tree_destroy(mv.mv_allocated);
+			zfs_btree_clear(&mv.mv_livelist_allocs);
+			zfs_btree_destroy(&mv.mv_livelist_allocs);
+
+			// TODO (optional): free segments avl tree
+		}
+	}
+
+	return (rc);
 }
 
 /* Spacemap Corruption Detection */
@@ -7704,14 +7889,14 @@ zdb_scd_main(spa_t *spa)
 	zdb_scd_t *scd;
 	int rc = 0;
 	int flags = TRAVERSE_PRE | TRAVERSE_PREFETCH_METADATA |
-	    TRAVERSE_NO_DECRYPT /*| TRAVERSE_HARD*/ | TRAVERSE_PREFETCH_DATA;
+	    TRAVERSE_NO_DECRYPT | TRAVERSE_HARD;
 
-	(void) printf("SCD: BEGIN\n");
+	(void) printf("SCD: BEGIN (zfs_arc_max=%lu)\n", zfs_arc_max);
 
 	scd = umem_zalloc(sizeof (zdb_scd_t), UMEM_NOFAIL);
 	scd->tvdevs = umem_zalloc(sizeof (zdb_scd_tvdev_t) * tvdev_count,
 	    UMEM_NOFAIL);
-	for (int c = 0; c < tvdev_count; c++) {
+	for (uint64_t c = 0; c < tvdev_count; c++) {
 		vdev_t *tvd = spa->spa_root_vdev->vdev_child[c];
 		scd->tvdevs[c].metaslabs = umem_zalloc(
 		    sizeof (zdb_scd_metaslab_t) * tvd->vdev_ms_count,
@@ -7724,8 +7909,48 @@ zdb_scd_main(spa_t *spa)
 		}
 	}
 
+	if (scd_scope != NULL) {
+		const char *colon = strchr(scd_scope, ':');
+		const char *slash = strchr(scd_scope, '/');
+		ASSERT(colon || slash);
+		ASSERT(!(colon && slash));
+
+		const char *delim = colon ? colon : slash;
+		char left_s[32];
+		char right_s[32];
+		ASSERT(strlen(scd_scope) < 30 + 30 + 1);
+		strncpy(left_s, scd_scope, delim - scd_scope);
+		left_s[delim - scd_scope] = '\0';
+		strcpy(right_s, delim + 1);
+
+		uint64_t left_i = strtoul(left_s, NULL, 10);
+		uint64_t right_i = strtoul(right_s, NULL, 10);
+
+		if (colon) {
+			scd->colon.vdev_id = left_i;
+			scd->colon.ms_id = right_i;
+			scd->colon.enabled = B_TRUE;
+			printf("SCD: Scoping the scanner to "
+			    "{ vdev_id=%lu ms_id=%lu }\n",
+			    scd->colon.vdev_id, scd->colon.ms_id);
+		}
+		if (slash) {
+			scd->slash.mod = left_i;
+			scd->slash.step = right_i;
+			scd->slash.enabled = B_TRUE;
+			printf("SCD: Scoping the scanner to "
+			    "{ every %lu metaslab of %lu }\n",
+			    scd->slash.mod, scd->slash.step);
+		}
+	}
+
 	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
+	(void) printf("SCD: INPROGRESS -- graph traversal\n");
 	rc = traverse_pool(spa, 0, flags, zdb_scd_blkptr_cb, scd);
+	if (rc == 0) {
+		(void) printf("SCD: INPROGRESS -- spacemap comparison\n");
+		rc = zdb_scd_compare_spacemaps(spa, scd);
+	}
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
 
 	if (rc == 0) {
@@ -7736,9 +7961,12 @@ zdb_scd_main(spa_t *spa)
 	}
 
 	(void) printf("SCD: END "
-	    "(blkptrs=%lu errors=%lu overlaps=%lu affected_blocks=%lu"
-	    " rc=%d)\n", scd->blkptrs, scd->errors, scd->overlaps,
-	    scd->affected_blocks, rc);
+	    "(blkptrs=%lu segments=%lu errors=%lu overlaps=%lu "
+	    "affected_blocks=%lu verified_segments=%lu affected_segments=%lu "
+	    "affected_metaslabs=%lu scope=%s rc=%d)\n", scd->blkptrs,
+	    scd->segments, scd->errors, scd->overlaps, scd->affected_blocks,
+	    scd->verified_segments, scd->affected_segments,
+	    scd->affected_metaslabs, scd_scope ? scd_scope : "all", rc);
 
 	/* TODO: explicit mem freeing is omitted for simplicity */
 
@@ -9618,7 +9846,7 @@ main(int argc, char **argv)
 		{"all-reconstruction",	no_argument,		NULL, 'Y'},
 		{"livelist",		no_argument,		NULL, 'y'},
 		{"zstd-headers",	no_argument,		NULL, 'Z'},
-		{"allocation-scanner",	no_argument,		NULL,
+		{"allocation-scanner",	optional_argument,	NULL,
 		    ALLOCATION_SCANNER_OPT},
 		{0, 0, 0, 0}
 	};
@@ -9627,6 +9855,11 @@ main(int argc, char **argv)
 	    "AbBcCdDeEFGhiI:kK:lLmMNo:Op:PqrRsSt:TuU:vVx:XYyZ",
 	    long_options, NULL)) != -1) {
 		switch (c) {
+		case ALLOCATION_SCANNER_OPT:
+			if (optarg)
+				scd_scope = strdup(optarg);
+			/* fall through */
+			__attribute__((fallthrough));
 		case 'b':
 		case 'B':
 		case 'c':
@@ -9650,7 +9883,6 @@ main(int argc, char **argv)
 		case 'u':
 		case 'y':
 		case 'Z':
-		case ALLOCATION_SCANNER_OPT:
 			dump_opt[c]++;
 			dump_all = 0;
 			break;
