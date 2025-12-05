@@ -384,6 +384,10 @@ static void
 verify_livelist_allocs(metaslab_verify_t *mv, uint64_t txg,
     uint64_t offset, uint64_t size)
 {
+	if (size > (1ULL << 24)) {
+		return;
+	}
+
 	sublivelist_verify_block_t svb = {{{0}}};
 	DVA_SET_VDEV(&svb.svb_dva, mv->mv_vdid);
 	DVA_SET_OFFSET(&svb.svb_dva, offset);
@@ -7750,7 +7754,8 @@ zdb_scd_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 		vdev_t *tvd = vdev_lookup_top(spa, scd->vdev_id);
 		scd->metaslab_idx = scd->offset >> tvd->vdev_ms_shift;
 		if (DVA_GET_GANG(dva)) {
-			scd->asize = sizeof(zio_gbh_phys_t);
+			scd->asize = vdev_psize_to_asize(tvd,
+			    sizeof(zio_gbh_phys_t));
 		}
 
 		if (scd->metaslab_idx >= tvd->vdev_ms_count) {
@@ -7891,7 +7896,7 @@ zdb_scd_main(spa_t *spa)
 	int flags = TRAVERSE_PRE | TRAVERSE_PREFETCH_METADATA |
 	    TRAVERSE_NO_DECRYPT | TRAVERSE_HARD;
 
-	(void) printf("SCD: BEGIN (zfs_arc_max=%lu)\n", zfs_arc_max);
+	(void) printf("SCD: BEGIN\n");
 
 	scd = umem_zalloc(sizeof (zdb_scd_t), UMEM_NOFAIL);
 	scd->tvdevs = umem_zalloc(sizeof (zdb_scd_tvdev_t) * tvdev_count,
@@ -7945,7 +7950,7 @@ zdb_scd_main(spa_t *spa)
 	}
 
 	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
-	(void) printf("SCD: INPROGRESS -- graph traversal\n");
+	(void) printf("SCD: INPROGRESS -- metadata traversal\n");
 	rc = traverse_pool(spa, 0, flags, zdb_scd_blkptr_cb, scd);
 	if (rc == 0) {
 		(void) printf("SCD: INPROGRESS -- spacemap comparison\n");
