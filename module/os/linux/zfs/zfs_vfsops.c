@@ -820,7 +820,7 @@ zfsvfs_setup(zfsvfs_t *zfsvfs, boolean_t mounting)
 	mutex_exit(&zfsvfs->z_os->os_user_ptr_lock);
 
 	zfsvfs_apply_lockout(zfsvfs,
-	    atomic_load_64(&(dmu_objset_pool(zfsvfs->z_os)->dp_lockout)));
+	    atomic_load_64(&(dmu_objset_spa(zfsvfs->z_os)->spa_lockout)));
 
 	return (0);
 }

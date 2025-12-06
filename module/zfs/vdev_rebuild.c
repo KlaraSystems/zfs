@@ -296,6 +296,8 @@ vdev_rebuild_initiate(vdev_t *vd, uint64_t txg)
 {
 	spa_t *spa = vd->vdev_spa;
 
+	(void)txg;
+
 	ASSERT(vd->vdev_top == vd);
 	ASSERT(MUTEX_HELD(&vd->vdev_rebuild_lock));
 	ASSERT(!vd->vdev_rebuilding);

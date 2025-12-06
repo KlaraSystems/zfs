@@ -475,7 +475,7 @@ metaslab_class_destroy(metaslab_class_t *mc)
 		avl_destroy(&mca->mca_tree);
 		mutex_destroy(&mca->mca_lock);
 		ASSERT0P(mca->mca_rotor);
-		if (!SPA_EXITING(spa)) {
+		if (!SPA_CANTWRITE(spa)) {
 			ASSERT0(mca->mca_reserved);
 		}
 	}
@@ -491,7 +491,7 @@ metaslab_class_validate(metaslab_class_t *mc)
 #ifdef ZFS_DEBUG
 	spa_t *spa = mc->mc_spa;
 
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		return;
 
 	/*
@@ -2153,7 +2153,7 @@ metaslab_verify_space(metaslab_t *msp, uint64_t txg)
 	if ((zfs_flags & ZFS_DEBUG_METASLAB_VERIFY) == 0)
 		return;
 
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		return;
 
 	/*
@@ -2331,7 +2331,7 @@ metaslab_verify_weight_and_frag(metaslab_t *msp)
 
 	if ((zfs_flags & ZFS_DEBUG_METASLAB_VERIFY) == 0)
 		return;
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		return;
 
 	/*
@@ -3069,7 +3069,7 @@ metaslab_fini(metaslab_t *msp)
 	metaslab_group_remove(mg, msp);
 
 	mutex_enter(&msp->ms_lock);
-	if (SPA_EXITING(mg->mg_vd->vdev_spa)) {
+	if (SPA_CANTWRITE(mg->mg_vd->vdev_spa)) {
 		/* Catch-all cleanup as required for forced exit. */
 		zfs_range_tree_vacate(msp->ms_allocatable, NULL, NULL);
 		zfs_range_tree_vacate(msp->ms_freeing, NULL, NULL);
@@ -3815,7 +3815,7 @@ metaslab_preload(void *arg)
 
 	mutex_enter(&msp->ms_lock);
 	err = metaslab_load(msp);
-	if (!SPA_EXITING(spa))
+	if (!SPA_CANTWRITE(spa))
 		VERIFY0(err);
 	if (!err)
 		metaslab_set_selected_txg(msp, spa_syncing_txg(spa));
@@ -3832,7 +3832,7 @@ metaslab_group_preload(metaslab_group_t *mg)
 	int m = 0;
 
 	if (spa_shutting_down(spa) || !metaslab_preload_enabled ||
-	    SPA_EXITING(spa))
+	    SPA_CANTWRITE(spa))
 		return;
 
 	mutex_enter(&mg->mg_lock);
@@ -4326,7 +4326,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 	/*
 	 * The pool is forcibly exiting. Just discard everything.
 	 */
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		goto spa_exiting;
 
 	/*
@@ -4369,7 +4369,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 	 * Generate a log space map if one doesn't exist already.
 	 */
 	err = spa_generate_syncing_log_sm(spa, tx);
-	if (err && SPA_EXITING(spa))
+	if (err && SPA_CANTWRITE(spa))
 		goto spa_exiting;
 	VERIFY0(err);
 
@@ -4379,7 +4379,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 		    spa_feature_is_enabled(spa, SPA_FEATURE_LOG_SPACEMAP) ?
 		    zfs_metaslab_sm_blksz_with_log :
 		    zfs_metaslab_sm_blksz_no_log, tx, &new_object);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			goto spa_exiting;
 		VERIFY0(err);
 		VERIFY3U(new_object, !=, 0);
@@ -4390,7 +4390,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 
 		err = space_map_open(&msp->ms_sm, mos, new_object,
 		    msp->ms_start, msp->ms_size, vd->vdev_ashift);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			goto spa_exiting;
 		VERIFY0(err);
 		ASSERT(msp->ms_sm != NULL);
@@ -4407,14 +4407,14 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 		uint64_t new_object;
 		err = space_map_alloc(mos,
 		    zfs_vdev_standard_sm_blksz, tx, &new_object);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			goto spa_exiting;
 		VERIFY0(err);
 		VERIFY3U(new_object, !=, 0);
 
 		err = space_map_open(&vd->vdev_checkpoint_sm,
 		    mos, new_object, 0, vd->vdev_asize, vd->vdev_ashift);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			goto spa_exiting;
 		VERIFY0(err);
 		ASSERT3P(vd->vdev_checkpoint_sm, !=, NULL);
@@ -4427,7 +4427,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 		err = zap_add(vd->vdev_spa->spa_meta_objset,
 		    vd->vdev_top_zap, VDEV_TOP_ZAP_POOL_CHECKPOINT_SM,
 		    sizeof (new_object), 1, &new_object, tx);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			goto spa_exiting;
 		VERIFY0(err);
 	}
@@ -4599,7 +4599,7 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 	uint64_t object;
 	err = dmu_read(mos, vd->vdev_ms_array,
 	    msp->ms_id * sizeof (uint64_t), sizeof (uint64_t), &object, 0);
-	if (err && SPA_EXITING(spa)) {
+	if (err && SPA_CANTWRITE(spa)) {
 		mutex_exit(&msp->ms_sync_lock);
 		goto spa_exiting;
 	}
@@ -5043,7 +5043,7 @@ find_valid_metaslab(metaslab_group_t *mg, uint64_t activation_weight,
 	for (; msp != NULL; msp = AVL_NEXT(t, msp)) {
 		int i;
 
-		if (tries > 0 && SPA_EXITING(mg->mg_vd->vdev_spa))
+		if (tries > 0 && SPA_CANTWRITE(mg->mg_vd->vdev_spa))
 			return (NULL);
 
 		if (!try_hard && tries > zfs_metaslab_find_max_tries) {
@@ -5173,7 +5173,7 @@ metaslab_group_alloc(metaslab_group_t *mg, zio_alloc_list_t *zal,
 	search->ms_allocator = -1;
 	search->ms_primary = B_TRUE;
 	for (;;) {
-		if (SPA_EXITING(mg->mg_vd->vdev_spa))
+		if (SPA_CANTWRITE(mg->mg_vd->vdev_spa))
 			break;
 
 		boolean_t was_active = B_FALSE;
@@ -5585,7 +5585,7 @@ top:
 			return (0);
 		}
 next:
-		if (SPA_EXITING(spa))
+		if (SPA_CANTWRITE(spa))
 			break;
 		metaslab_class_rotate(mg, allocator, psize, B_FALSE);
 	} while ((mg = mg->mg_next) != rotor);
@@ -5595,7 +5595,7 @@ next:
 	 */
 	if (!try_hard && (zfs_metaslab_try_hard_before_gang ||
 	    GANG_ALLOCATION(flags) || (flags & METASLAB_ZIL) != 0 ||
-	    psize <= spa->spa_min_alloc) && !SPA_EXITING(spa)) {
+	    psize <= spa->spa_min_alloc) && !SPA_CANTWRITE(spa)) {
 		METASLABSTAT_BUMP(metaslabstat_try_hard);
 		try_hard = B_TRUE;
 		goto top;
@@ -5605,6 +5605,8 @@ next:
 
 	if (SPA_EXITING(spa))
 		return (SET_ERROR(EIO));
+	if (SPA_LOCKOUT(spa))
+		return (SET_ERROR(EROFS));
 
 	metaslab_trace_add(zal, rotor, NULL, psize, d, TRACE_ENOSPC, allocator);
 	return (SET_ERROR(ENOSPC));
@@ -5652,11 +5654,11 @@ metaslab_free_concrete(vdev_t *vd, uint64_t offset, uint64_t asize,
 
 	if (checkpoint) {
 		ASSERT(spa_has_checkpoint(spa));
-		if (!SPA_EXITING(spa))
+		if (!SPA_CANTWRITE(spa))
 			zfs_range_tree_add(msp->ms_checkpointing, offset,
 			    asize);
 	} else {
-		if (!SPA_EXITING(spa))
+		if (!SPA_CANTWRITE(spa))
 			zfs_range_tree_add(msp->ms_freeing, offset, asize);
 	}
 	mutex_exit(&msp->ms_lock);
@@ -6311,7 +6313,7 @@ metaslab_check_free_impl(vdev_t *vd, uint64_t offset, uint64_t size)
 
 	msp = vd->vdev_ms[offset >> vd->vdev_ms_shift];
 
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		return; /* skip checks */
 	mutex_enter(&msp->ms_lock);
 	if (msp->ms_loaded) {
@@ -6345,7 +6347,7 @@ metaslab_check_free(spa_t *spa, const blkptr_t *bp)
 {
 	if ((zfs_flags & ZFS_DEBUG_ZIO_FREE) == 0)
 		return;
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		return;
 
 	spa_config_enter(spa, SCL_VDEV, FTAG, RW_READER);
@@ -6479,17 +6481,17 @@ metaslab_update_ondisk_flush_data(metaslab_t *ms, dmu_tx_t *tx)
 	if (err == ENOENT) {
 		err = dmu_object_alloc(mos, DMU_OTN_UINT64_METADATA,
 		    SPA_OLD_MAXBLOCKSIZE, DMU_OT_NONE, 0, tx, &object);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			return (err);
 		VERIFY0(err);
 		err = zap_add(mos, vd->vdev_top_zap,
 		    VDEV_TOP_ZAP_MS_UNFLUSHED_PHYS_TXGS, sizeof (uint64_t), 1,
 		    &object, tx);
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			return (err);
 		VERIFY0(err);
 	} else {
-		if (err && SPA_EXITING(spa))
+		if (err && SPA_CANTWRITE(spa))
 			return (err);
 		VERIFY0(err);
 	}

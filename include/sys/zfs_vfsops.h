@@ -78,7 +78,7 @@ zfsvfs_lockout_error(zfsvfs_t *zfsvfs)
 	 *     LOCKOUT_READONLY). ideas already had, but maybe I didn't write
 	 *     them down before? -- robn, 2024-07-09
 	 */
-	switch (atomic_load_64(&zfsvfs->z_os->os_spa->spa_dsl_pool->dp_lockout)) {
+	switch (atomic_load_64(&zfsvfs->z_os->os_spa->spa_lockout)) {
 	case LOCKOUT_READONLY:
 		return (SET_ERROR(EROFS));
 	default:

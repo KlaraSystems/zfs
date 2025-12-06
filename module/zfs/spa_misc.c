@@ -2088,9 +2088,7 @@ spa_exiting(spa_t *spa)
 boolean_t
 spa_lockout(spa_t *spa)
 {
-	if (spa->spa_dsl_pool == NULL)
-		return B_TRUE;
-	return (atomic_load_64(&spa->spa_dsl_pool->dp_lockout) == LOCKOUT_NONE);
+	return (atomic_load_64(&spa->spa_lockout) != LOCKOUT_NONE);
 }
 
 uint64_t

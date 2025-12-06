@@ -37,6 +37,7 @@
 #include <sys/zap_impl.h>
 #include <sys/spa.h>
 #include <sys/brt.h>
+#include <sys/spa_impl.h>
 #include <sys/brt_impl.h>
 #include <sys/sa.h>
 #include <sys/sa_impl.h>
@@ -1092,7 +1093,7 @@ dmu_tx_try_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	 *     once the lockout is propagated to datasets.
 	 */
 	if (!(flags & DMU_TX_NOLOCKOUT) &&
-	    atomic_load_64(&tx->tx_pool->dp_lockout)) {
+	    atomic_load_64(&spa->spa_lockout)) {
 		DMU_TX_STAT_BUMP(dmu_tx_lockout);
 		return (SET_ERROR(EAGAIN));
 	}

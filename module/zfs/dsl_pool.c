@@ -53,6 +53,7 @@
 #include <sys/mmp.h>
 #include <sys/zvol.h>
 #include <sys/zfs_vfsops.h>
+#include <sys/lockout.h>
 
 /*
  * ZFS Write Throttle
@@ -1622,53 +1623,12 @@ dsl_pool_config_held_writer(dsl_pool_t *dp)
 	return (RRW_WRITE_HELD(&dp->dp_config_rwlock));
 }
 
-static int
-dsl_pool_lockout_ds_cb(dsl_pool_t *dp, dsl_dataset_t *ds, void *arg)
-{
-	(void) dp;
-
-#ifdef _KERNEL
-	uint64_t lockout = *(uint64_t *)arg;
-
-	objset_t *os = ds->ds_objset;
-	if (os == NULL)
-		return (0);
-
-	mutex_enter(&os->os_user_ptr_lock);
-	void *state = dmu_objset_get_user(os);
-	mutex_exit(&os->os_user_ptr_lock);
-
-	switch (dmu_objset_type(os)) {
-	case DMU_OST_ZFS:
-		zfsvfs_apply_lockout(state, lockout);
-		break;
-	case DMU_OST_ZVOL:
-		zvol_apply_lockout(state, lockout);
-		break;
-	default:
-		cmn_err(CE_NOTE, "dsl_pool_lockout_ds_cb: don't know how to "
-		    "lockout type %d objset %llu, skipping",
-		    dmu_objset_type(os), (u_longlong_t)dmu_objset_id(os));
-		break;
-	}
-#else
-	(void) ds;
-	(void) arg;
-#endif
-
-	return (0);
-}
 
 void dsl_pool_lockout(dsl_pool_t *dp, uint64_t lockout) {
 	/*
 	 * set lockout on the pool as a whole (applied to new objsets)
 	 */
-	atomic_store_64(&dp->dp_lockout, lockout);
-
-	/*
-	 * propagate to objset lockouts */
-	dmu_objset_find_dp(dp, dp->dp_root_dir_obj, dsl_pool_lockout_ds_cb,
-	    &lockout, DS_FIND_CHILDREN);
+	atomic_store_64(&dp->dp_spa->spa_lockout, lockout);
 
 	/* Wake up anyone stuck in txg_wait_sync_flags */
 	/* XXX move to txg.c, name it txg_poke() */
@@ -1676,6 +1636,10 @@ void dsl_pool_lockout(dsl_pool_t *dp, uint64_t lockout) {
 	mutex_enter(&tx->tx_sync_lock);
 	cv_broadcast(&tx->tx_sync_done_cv);
 	mutex_exit(&tx->tx_sync_lock);
+
+	if (lockout == LOCKOUT_READONLY) {
+		dp->dp_spa->spa_mode &= ~SPA_MODE_WRITE;
+	} // re-enable writing?
 
 	/* XXX probably dbgmsg */
 	cmn_err(CE_NOTE, "dsl_pool_lockout: set lockout state to %llu",

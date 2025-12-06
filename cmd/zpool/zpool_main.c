@@ -8343,6 +8343,9 @@ zpool_do_clear(int argc, char **argv)
 	int ret = 0;
 	boolean_t is_power_on = B_FALSE;
 	boolean_t readonly = B_FALSE;
+	boolean_t dryrun = B_FALSE;
+	boolean_t do_rewind = B_FALSE;
+	boolean_t xtreme_rewind = B_FALSE;
 	uint32_t rewind_policy = ZPOOL_NO_REWIND;
 	nvlist_t *nvopts = NULL;
 	zpool_handle_t *zhp;
@@ -8419,6 +8422,7 @@ zpool_do_clear(int argc, char **argv)
 	    readonly) != 0) {
 		nvlist_free(nvopts);
 		return (1);
+	}
 
 	pool = argv[0];
 	device = argc == 2 ? argv[1] : NULL;

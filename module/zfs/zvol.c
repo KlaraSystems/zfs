@@ -1167,7 +1167,7 @@ zvol_setup_zv(zvol_state_t *zv)
 	}
 
 	zvol_apply_lockout(zv,
-	    atomic_load_64(&(dmu_objset_pool(os)->dp_lockout)));
+	    atomic_load_64(&(dmu_objset_spa(os)->spa_lockout)));
 
 	return (0);
 }
