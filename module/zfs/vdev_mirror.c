@@ -799,60 +799,6 @@ vdev_mirror_io_done(zio_t *zio)
 		zio->io_error = vdev_mirror_worst_error(mm);
 		ASSERT(zio->io_error != 0);
 	}
-
-	if (good_copies && spa_writeable(zio->io_spa) &&
-	    (unexpected_errors ||
-	    (zio->io_flags & ZIO_FLAG_RESILVER) ||
-	    ((zio->io_flags & ZIO_FLAG_SCRUB) && mm->mm_resilvering))) {
-		/*
-		 * Use the good data we have in hand to repair damaged children.
-		 */
-		for (c = 0; c < mm->mm_children; c++) {
-			/*
-			 * Don't rewrite known good children.
-			 * Not only is it unnecessary, it could
-			 * actually be harmful: if the system lost
-			 * power while rewriting the only good copy,
-			 * there would be no good copies left!
-			 */
-			mc = &mm->mm_child[c];
-
-			if (mc->mc_error == 0) {
-				vdev_ops_t *ops = mc->mc_vd->vdev_ops;
-
-				if (mc->mc_tried)
-					continue;
-				/*
-				 * We didn't try this child.  We need to
-				 * repair it if:
-				 * 1. it's a scrub (in which case we have
-				 * tried everything that was healthy)
-				 *  - or -
-				 * 2. it's an indirect or distributed spare
-				 * vdev (in which case it could point to any
-				 * other vdev, which might have a bad DTL)
-				 *  - or -
-				 * 3. the DTL indicates that this data is
-				 * missing from this vdev
-				 */
-				if (!(zio->io_flags & ZIO_FLAG_SCRUB) &&
-				    ops != &vdev_indirect_ops &&
-				    ops != &vdev_draid_spare_ops &&
-				    !vdev_dtl_contains(mc->mc_vd, DTL_PARTIAL,
-				    zio->io_txg, 1))
-					continue;
-				mc->mc_error = SET_ERROR(ESTALE);
-			}
-
-			zio_nowait(zio_vdev_child_io(zio, zio->io_bp,
-			    mc->mc_vd, mc->mc_offset,
-			    zio->io_abd, zio->io_size, ZIO_TYPE_WRITE,
-			    zio->io_priority == ZIO_PRIORITY_REBUILD ?
-			    ZIO_PRIORITY_REBUILD : ZIO_PRIORITY_ASYNC_WRITE,
-			    ZIO_FLAG_IO_REPAIR | (unexpected_errors ?
-			    ZIO_FLAG_SELF_HEAL : 0), NULL, NULL));
-		}
-	}
 }
 
 static void

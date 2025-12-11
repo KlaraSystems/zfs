@@ -1807,33 +1807,6 @@ vdev_raidz_io_done_verified(zio_t *zio, raidz_row_t *rr)
 		int n = raidz_parity_verify(zio, rr);
 		unexpected_errors += n;
 	}
-
-	if (zio->io_error == 0 && spa_writeable(zio->io_spa) &&
-	    (unexpected_errors > 0 || (zio->io_flags & ZIO_FLAG_RESILVER))) {
-		/*
-		 * Use the good data we have in hand to repair damaged children.
-		 */
-		for (int c = 0; c < rr->rr_cols; c++) {
-			raidz_col_t *rc = &rr->rr_col[c];
-			vdev_t *vd = zio->io_vd;
-			vdev_t *cvd = vd->vdev_child[rc->rc_devidx];
-
-			if (!rc->rc_allow_repair) {
-				continue;
-			} else if (!rc->rc_force_repair &&
-			    (rc->rc_error == 0 || rc->rc_size == 0)) {
-				continue;
-			}
-
-			zio_nowait(zio_vdev_child_io(zio, NULL, cvd,
-			    rc->rc_offset, rc->rc_abd, rc->rc_size,
-			    ZIO_TYPE_WRITE,
-			    zio->io_priority == ZIO_PRIORITY_REBUILD ?
-			    ZIO_PRIORITY_REBUILD : ZIO_PRIORITY_ASYNC_WRITE,
-			    ZIO_FLAG_IO_REPAIR | (unexpected_errors ?
-			    ZIO_FLAG_SELF_HEAL : 0), NULL, NULL));
-		}
-	}
 }
 
 static void
