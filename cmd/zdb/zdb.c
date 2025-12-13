@@ -7617,6 +7617,7 @@ zdb_scd_process_chunk(zdb_scd_t *scd, uint64_t chunk_offset,
 		found = avl_find(&scd->metaslab->segments, &chunk_offset,
 		    &where);
 	if (found == NULL) {
+		boolean_t should_revise_where = B_FALSE;
 		nbefore = avl_nearest(&scd->metaslab->segments, where,
 		    AVL_BEFORE);
 		if (nbefore != NULL &&
@@ -7631,6 +7632,7 @@ zdb_scd_process_chunk(zdb_scd_t *scd, uint64_t chunk_offset,
 				chunk_asize = chunk_offset + chunk_asize -
 				    (nbefore->seg_offset + nbefore->seg_asize);
 			chunk_offset = nbefore->seg_offset + nbefore->seg_asize;
+			should_revise_where = B_TRUE;
 		}
 		if (chunk_asize == 0)
 			return;
@@ -7643,6 +7645,7 @@ zdb_scd_process_chunk(zdb_scd_t *scd, uint64_t chunk_offset,
 			    chunk_offset + chunk_asize - nafter->seg_offset,
 			    nafter);
 			chunk_asize = nafter->seg_offset - chunk_offset;
+			should_revise_where = B_TRUE;
 		}
 		if (chunk_asize == 0)
 			return;
@@ -7653,7 +7656,10 @@ zdb_scd_process_chunk(zdb_scd_t *scd, uint64_t chunk_offset,
 		newseg->seg_asize = chunk_asize;
 		newseg->seg_birthtime = BP_GET_BIRTH(scd->bp);
 		memcpy(&newseg->seg_src_zb, scd->zb, sizeof (*scd->zb));
-		avl_insert(&scd->metaslab->segments, newseg, where);
+		if (should_revise_where)
+			avl_add(&scd->metaslab->segments, newseg);
+		else
+			avl_insert(&scd->metaslab->segments, newseg, where);
 		scd->segments++;
 		return;
 	}
