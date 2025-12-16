@@ -5501,6 +5501,9 @@ vdev_config_dirty(vdev_t *vd)
 	vdev_t *rvd = spa->spa_root_vdev;
 	int c;
 
+	if (SPA_CANTWRITE(spa))
+		return;
+
 	ASSERT(spa_writeable(spa));
 
 	/*

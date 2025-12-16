@@ -618,6 +618,8 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	ssize_t start_resid = zfs_uio_resid(uio);
 	uint64_t clear_setid_bits_txg = 0;
 	boolean_t o_direct_defer = B_FALSE;
+	zfsvfs_t *zfsvfs = ZTOZSB(zp);
+	spa_t *spa = zfsvfs->z_os->os_spa;
 
 	/*
 	 * Fasttrack empty write
@@ -626,7 +628,6 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	if (n == 0)
 		return (0);
 
-	zfsvfs_t *zfsvfs = ZTOZSB(zp);
 	if ((error = zfs_enter_verify_zp(zfsvfs, zp, FTAG)) != 0)
 		return (error);
 
@@ -647,9 +648,13 @@ zfs_write(znode_t *zp, zfs_uio_t *uio, int ioflag, cred_t *cr)
 	 * Callers might not be able to detect properly that we are read-only,
 	 * so check it explicitly here.
 	 */
-	if (zfs_is_readonly(zfsvfs)) {
+	if (zfs_is_readonly(zfsvfs) || SPA_LOCKOUT(spa)) {
 		zfs_exit(zfsvfs, FTAG);
 		return (SET_ERROR(EROFS));
+	}
+	if (SPA_EXITING(spa)) {
+		zfs_exit(zfsvfs, FTAG);
+		return (SET_ERROR(EIO));
 	}
 
 	/*

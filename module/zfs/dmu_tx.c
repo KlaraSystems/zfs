@@ -1331,10 +1331,12 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 		/*
 		 * Return unless we decided to retry, or the caller does not
 		 * want to block.
+		 * We get EAGAIN if the pool is in lockout (readonly) mode,
+		 * but we insisted on completing the I/O, which won't happen.
 		 */
 		if (err != ERESTART || !(flags & DMU_TX_WAIT)) {
 			ASSERT(err == EDQUOT || err == ENOSPC ||
-			    err == ERESTART || err == EIO);
+			    err == ERESTART || err == EIO || err == EROFS || err == EAGAIN);
 			return (err);
 		}
 
