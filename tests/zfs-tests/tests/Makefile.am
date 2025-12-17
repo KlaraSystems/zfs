@@ -1120,6 +1120,7 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/cli_root/zpool_clear/zpool_clear_lockout_001.ksh \
 	functional/cli_root/zpool_clear/zpool_clear_lockout_002.ksh \
 	functional/cli_root/zpool_clear/zpool_clear_lockout_003.ksh \
+	functional/cli_root/zpool_clear/zpool_clear_lockout_004.ksh \
 	functional/cli_root/zpool_create/cleanup.ksh \
 	functional/cli_root/zpool_create/create-o_ashift.ksh \
 	functional/cli_root/zpool_create/setup.ksh \
