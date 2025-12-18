@@ -56,7 +56,7 @@ log_onexit restore_root_datasets
 childfs=$ROOT_TESTFS/childfs
 
 eval set -A dataset $DATASETS
-typeset perms="snapshot,reservation,compression,checksum,userprop"
+typeset perms="snapshot,reservation,compression,checksum,userprop,redact"
 
 # Verify option '-d' only affect sub-datasets
 log_must zfs create $childfs

@@ -203,6 +203,9 @@ function check_fs_perm
 		snapshot)
 			verify_fs_snapshot $user $perm $fs
 			;;
+		redact)
+			verify_fs_redact $user $perm $fs
+			;;
 		rollback)
 			verify_fs_rollback $user $perm $fs
 			;;
@@ -720,6 +723,32 @@ function verify_fs_snapshot
 		fi
 		log_must zfs destroy $snap
 	fi
+
+	return 0
+}
+
+function verify_fs_redact
+{
+	typeset user=$1
+	typeset perm=$2
+	typeset fs=$3
+
+	typeset stamp=${perm}.${user}.$RANDOM
+	typeset snap=$fs@snap.$stamp
+
+	if [[ "yes" == $(get_prop mounted $fs) ]]; then
+		log_must zfs umount $fs
+	fi
+
+	user_run $user zfs snapshot $snap
+	if ! datasetexists $snap ; then
+		return 1
+	fi
+
+	log_must zfs allow $user redact $fs
+	log_must user_run $user zfs redact $snap redact_test $fs
+	log_must zfs destroy "$fs#redact_test"
+	log_must zfs destroy $snap
 
 	return 0
 }
