@@ -7580,8 +7580,9 @@ zdb_scd_report_affected_segment(zdb_scd_t *scd, zdb_scd_segment_t *seg)
 
 	scd->affected_segments++;
 
-	(void) printf("SCD: NOT-MARKED-AS-ALLOCATED SEGMENT { vdev_id=%lu ms_id=%lu offset=%lu asize=%lu}"
-	    " in block { os=%lu o=%lu lvl=%ld blkid=%lu }",
+	(void) printf("SCD: NOT-MARKED-AS-ALLOCATED SEGMENT "
+	    "{ vdev_id=%lu ms_id=%lu offset=%lu asize=%lu } "
+	    "in block { os=%lu o=%lu lvl=%ld blkid=%lu }",
 	    scd->vdev_id, scd->metaslab_idx, seg->seg_offset, seg->seg_asize,
 	    zb->zb_objset, zb->zb_object, zb->zb_level, zb->zb_blkid
 	);
@@ -7965,6 +7966,8 @@ zdb_scd_main(spa_t *spa)
 	spa_config_exit(spa, SCL_CONFIG, FTAG);
 
 	if (rc == 0) {
+		if (scd->affected_segments > 0)
+			rc = ENOENT;
 		if (scd->overlaps > 0)
 			rc = ECKSUM;
 		if (scd->errors > 0)
