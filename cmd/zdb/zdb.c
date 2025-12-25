@@ -7709,7 +7709,7 @@ zdb_scd_print_progress(zdb_scd_t *scd)
 		return;
 	latest = now;
 
-	(void) fprintf(stderr, "SCD: INPROGRESS "
+	(void) printf("SCD: INPROGRESS "
 	    "(blkptrs=%lu segments=%lu errors=%lu overlaps=%lu "
 	    "affected_blocks=%lu verified_segments=%lu affected_segments=%lu "
 	    "affected_metaslabs=%lu scope=%s)\n", scd->blkptrs, scd->segments,
