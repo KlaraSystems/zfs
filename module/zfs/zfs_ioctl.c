@@ -1082,6 +1082,17 @@ zfs_secpolicy_create_clone(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 }
 
 /*
+ * Policy for redact.
+ */
+static int zfs_secpolicy_redact(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
+{
+	(void) innvl;
+
+	return zfs_secpolicy_write_perms(zc->zc_name,
+	    ZFS_DELEG_PERM_REDACT, cr);
+}
+
+/*
  * Policy for pool operations - create/destroy pools, add vdevs, etc.  Requires
  * SYS_CONFIG privilege, which is not available in a local zone.
  */
@@ -7575,7 +7586,7 @@ zfs_ioctl_init(void)
 	    ARRAY_SIZE(zfs_keys_channel_program));
 
 	zfs_ioctl_register("redact", ZFS_IOC_REDACT,
-	    zfs_ioc_redact, zfs_secpolicy_config, DATASET_NAME,
+	    zfs_ioc_redact, zfs_secpolicy_redact, DATASET_NAME,
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE,
 	    zfs_keys_redact, ARRAY_SIZE(zfs_keys_redact));
 

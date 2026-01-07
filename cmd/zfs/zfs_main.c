@@ -5325,6 +5325,8 @@ zfs_do_receive(int argc, char **argv)
 #define	ZFS_DELEG_PERM_PROJECTOBJUSED	"projectobjused"
 #define	ZFS_DELEG_PERM_PROJECTOBJQUOTA	"projectobjquota"
 
+#define	ZFS_DELEG_PERM_REDACT		"redact"
+
 #define	ZFS_NUM_DELEG_NOTES ZFS_DELEG_NOTE_NONE
 
 static zfs_deleg_perm_tab_t zfs_deleg_perm_tbl[] = {
@@ -5361,6 +5363,7 @@ static zfs_deleg_perm_tab_t zfs_deleg_perm_tbl[] = {
 	{ ZFS_DELEG_PERM_PROJECTQUOTA, ZFS_DELEG_NOTE_PROJECTQUOTA },
 	{ ZFS_DELEG_PERM_PROJECTOBJUSED, ZFS_DELEG_NOTE_PROJECTOBJUSED },
 	{ ZFS_DELEG_PERM_PROJECTOBJQUOTA, ZFS_DELEG_NOTE_PROJECTOBJQUOTA },
+	{ ZFS_DELEG_PERM_REDACT, ZFS_DELEG_NOTE_REDACT },
 	{ NULL, ZFS_DELEG_NOTE_NONE }
 };
 
