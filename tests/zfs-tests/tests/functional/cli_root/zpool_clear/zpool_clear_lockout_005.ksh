@@ -41,7 +41,9 @@
 # 5. Force the pool read-only using "zpool -R clear"
 # 6. Get the write count for the pool again.
 # 7. Compare the two write counts to ensure they match.
-# 8. Export the pool.
+# 8. Wait 2 seconds, get the write count for the pool again.
+# 9. Compare the last two write counts to ensure they match.
+# 10. Export the pool.
 #
 
 verify_runnable "global"
@@ -76,10 +78,16 @@ sleep 0.5
 post_lock=$(zpool get -Hp -o value write_ops $TESTPOOL1 $TESTDIR/file1)
 
 # 7. Compare the two counts to ensure they match
-
 log_must test "$pre_lock" -eq "$post_lock"
 
-# 8. Export the pool.
+# 8. Wait 2 seconds, get the write count again
+sleep 2
+later_lock=$(zpool get -Hp -o value write_ops $TESTPOOL1 $TESTDIR/file1)
+
+# 9. Compare the last two write counts to ensure they match.
+log_must test "$post_lock" -eq "$later_lock"
+
+# 10. Export the pool.
 log_must zpool export $TESTPOOL1
 
 log_pass "Locked out pool write count stops incrementing"
