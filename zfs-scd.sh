@@ -24,14 +24,20 @@ runScan() {
     echo "Hostname = $(hostname)"
     echo "Pool Status for $POOL: "
     zpool status $POOL
-    echo "$(date): BEGIN scan for pool $POOL"
-    $MYDIR/libs/zdb --allocation-scanner $POOL
+
+    if [[ -z $1 ]]; then
+        echo "$(date): BEGIN scan for pool $POOL"
+        $MYDIR/libs/zdb --allocation-scanner $POOL
+    else
+        echo "$(date): BEGIN scan for pool $POOL with scope = $1"
+        $MYDIR/libs/zdb --allocation-scanner=$1 $POOL
+    fi
     echo "$(date): END scan for pool $POOL"
 }
 
 # Run zdb as a detached background task and capture the output
 set -m
-runScan >>$LOGFILE 2>&1 &
+runScan $@ >>$LOGFILE 2>&1 &
 set +m
 pid=$!
 disown $pid
