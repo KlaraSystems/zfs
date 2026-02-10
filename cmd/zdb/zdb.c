@@ -2700,7 +2700,8 @@ print_file_layout_raidz(vdev_t *vd, blkptr_t *bp, uint64_t file_offset,
 	 */
 	const dva_t *dva = bp->blk_dva;
 	zio_t zio = {0};
-	zio.io_size = BP_GET_LSIZE(bp);
+	zio.io_size = P2ROUNDUP_TYPED(BP_GET_PSIZE(bp),
+	    1ULL << vd->vdev_ashift, uint64_t);
 	zio.io_offset = DVA_GET_OFFSET(&dva[0]);
 	zio.io_type = ZIO_TYPE_READ;
 	zio.io_abd = abd_alloc_for_io(zio.io_size, B_FALSE);
