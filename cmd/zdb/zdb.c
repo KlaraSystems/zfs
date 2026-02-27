@@ -727,10 +727,12 @@ usage(void)
 	    "\t%s -f [-H] [-e [-V] [-p <path> ...]] [-U <cache>]\n"
 	    "\t\t[<poolname>[/<dataset | objset id>] [<object | range> ...]]\n"
 	    "\t%s -E [-A] word0:word1:...:word15\n"
-	    "\t%s -S [-AP] [-e [-V] [-p <path> ...]] [-U <cache>] "
+	    "\t%s --allocation-scanner[=2/n] <poolname>\n"
+	    "\t%s -S [-AP] [-e [-V] [-p <path> ...]] [-U <cache>]\n"
 	    "<poolname>\n\n",
 	    cmdname, cmdname, cmdname, cmdname, cmdname, cmdname, cmdname,
-	    cmdname, cmdname, cmdname, cmdname, cmdname, cmdname, cmdname);
+	    cmdname, cmdname, cmdname, cmdname, cmdname, cmdname, cmdname,
+	    cmdname);
 
 	(void) fprintf(stderr, "    Dataset name must include at least one "
 	    "separator character '/' or '@'\n");
@@ -751,6 +753,8 @@ usage(void)
 	    "            z     ZAPs\n"
 	    "            -     Negate effect of next flag\n\n");
 	(void) fprintf(stderr, "    Options to control amount of output:\n");
+	(void) fprintf(stderr, "        --allocation-scanner[=x/n]   "
+	    "scan for incorrect allocations, chunk X of N\n");
 	(void) fprintf(stderr, "        -b --block-stats             "
 	    "block statistics\n");
 	(void) fprintf(stderr, "        -B --backup                  "
