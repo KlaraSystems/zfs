@@ -96,6 +96,47 @@ typedef struct dsl_errorscrub_phys {
 	/ sizeof (uint64_t))
 
 /*
+ * Snapshot of the most recent completed metadata-only scrub. The active
+ * metascrub run still flows through dsl_scan_phys_t (it shares all the scan
+ * plumbing with a regular scrub); this record is written at completion so
+ * that "zpool status" can report the last metascrub independently of any
+ * later full scrub or resilver that overwrites scn_phys. Mirrors the role
+ * that DMU_POOL_ERRORSCRUB plays for error scrubs.
+ */
+typedef struct dsl_metascrub_phys {
+	uint64_t msc_state;		/* dsl_scan_state_t */
+	uint64_t msc_start_time;
+	uint64_t msc_end_time;
+	uint64_t msc_to_examine;
+	uint64_t msc_examined;
+	uint64_t msc_processed;
+	uint64_t msc_errors;
+} dsl_metascrub_phys_t;
+
+#define	METASCRUB_PHYS_NUMINTS (sizeof (dsl_metascrub_phys_t) \
+	/ sizeof (uint64_t))
+
+/*
+ * Snapshot of the most recent completed full scrub. dsl_scan_phys_t
+ * (scn_phys) only ever reflects the active or most-recent scan of any
+ * type, so a subsequent metascrub or resilver overwrites the last full
+ * scrub's start/end time and statistics. This snapshot is written at
+ * completion so the previous full scrub remains visible in "zpool status".
+ */
+typedef struct dsl_lastscrub_phys {
+	uint64_t lsc_state;		/* dsl_scan_state_t */
+	uint64_t lsc_start_time;
+	uint64_t lsc_end_time;
+	uint64_t lsc_to_examine;
+	uint64_t lsc_examined;
+	uint64_t lsc_processed;
+	uint64_t lsc_errors;
+} dsl_lastscrub_phys_t;
+
+#define	LASTSCRUB_PHYS_NUMINTS (sizeof (dsl_lastscrub_phys_t) \
+	/ sizeof (uint64_t))
+
+/*
  * Every pool will have one dsl_scan_t and this structure will contain
  * in-memory information about the scan and a pointer to the on-disk
  * representation (i.e. dsl_scan_phys_t). Most of the state of the scan
@@ -178,6 +219,14 @@ typedef struct dsl_scan {
 	uint64_t scn_queues_pending;	/* outstanding data to issue */
 	/* members needed for syncing error scrub status to disk */
 	dsl_errorscrub_phys_t errorscrub_phys;
+	/*
+	 * Snapshots of the last completed full scrub and last completed
+	 * metadata-only scrub. Written at completion in dsl_scan_done(),
+	 * loaded at pool import. They survive subsequent scans of the
+	 * other type, so each is independently visible in "zpool status".
+	 */
+	dsl_lastscrub_phys_t lastscrub_phys;
+	dsl_metascrub_phys_t metascrub_phys;
 } dsl_scan_t;
 
 typedef struct {

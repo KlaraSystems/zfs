@@ -2886,6 +2886,24 @@ spa_scan_get_stats(spa_t *spa, pool_scan_stat_t *ps)
 	/* error scrub data not stored on disk */
 	ps->pss_pass_error_scrub_pause = spa->spa_scan_pass_errorscrub_pause;
 
+	/* last completed full-scrub snapshot */
+	ps->pss_last_scrub_state = scn->lastscrub_phys.lsc_state;
+	ps->pss_last_scrub_start = scn->lastscrub_phys.lsc_start_time;
+	ps->pss_last_scrub_end = scn->lastscrub_phys.lsc_end_time;
+	ps->pss_last_scrub_to_examine = scn->lastscrub_phys.lsc_to_examine;
+	ps->pss_last_scrub_examined = scn->lastscrub_phys.lsc_examined;
+	ps->pss_last_scrub_processed = scn->lastscrub_phys.lsc_processed;
+	ps->pss_last_scrub_errors = scn->lastscrub_phys.lsc_errors;
+
+	/* last completed metascrub snapshot */
+	ps->pss_metascrub_state = scn->metascrub_phys.msc_state;
+	ps->pss_metascrub_start = scn->metascrub_phys.msc_start_time;
+	ps->pss_metascrub_end = scn->metascrub_phys.msc_end_time;
+	ps->pss_metascrub_to_examine = scn->metascrub_phys.msc_to_examine;
+	ps->pss_metascrub_examined = scn->metascrub_phys.msc_examined;
+	ps->pss_metascrub_processed = scn->metascrub_phys.msc_processed;
+	ps->pss_metascrub_errors = scn->metascrub_phys.msc_errors;
+
 	return (0);
 }
 
