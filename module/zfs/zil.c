@@ -2067,7 +2067,7 @@ next_lwb:
 	 */
 	dmu_tx_t *tx = dmu_tx_create(zilog->zl_os);
 	VERIFY0(dmu_tx_assign(tx,
-	    DMU_TX_WAIT | DMU_TX_NOTHROTTLE | DMU_TX_SUSPEND) | DMU_TX_NOLOCKOUT);
+	    DMU_TX_WAIT | DMU_TX_NOTHROTTLE | DMU_TX_SUSPEND | DMU_TX_NOLOCKOUT));
 	dsl_dataset_dirty(dmu_objset_ds(zilog->zl_os), tx);
 	uint64_t txg = dmu_tx_get_txg(tx);
 
