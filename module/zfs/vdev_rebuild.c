@@ -292,7 +292,7 @@ vdev_rebuild_log_notify(spa_t *spa, vdev_t *vd, const char *name)
  * active for the duration of the rebuild, then revert to the enabled state.
  */
 static void
-vdev_rebuild_initiate(vdev_t *vd, uint64_t txg)
+vdev_rebuild_initiate(vdev_t *vd, uint64_t txg __maybe_unused)
 {
 	spa_t *spa = vd->vdev_spa;
 
