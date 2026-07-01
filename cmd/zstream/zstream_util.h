@@ -49,6 +49,9 @@ safe_calloc(size_t size);
 extern void *
 safe_realloc(void *from, size_t size);
 
+extern void
+safe_pwrite(int raw_volume, void *buf, size_t nbytes, off_t offset);
+
 extern char *
 checksum_str(zio_cksum_t *cksum, char *buff, size_t buff_size);
 

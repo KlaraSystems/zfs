@@ -37,19 +37,17 @@
 #include <sys/zap_impl.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/zio.h>
-#include <sys/zio_compress.h>
 #include <sys/zstd/zstd.h>
 #include <sys/zvol.h>
 #include <err.h>
-#include <libnvpair.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <zfs_fletcher.h>
 
 #include "zstream.h"
+#include "zstream_modules.h"
 #include "zstream_util.h"
 
 /*
@@ -61,50 +59,18 @@
     DMU_BACKUP_FEATURE_LZ4 | DMU_BACKUP_FEATURE_LARGE_BLOCKS | \
     DMU_BACKUP_FEATURE_COMPRESSED | DMU_BACKUP_FEATURE_ZSTD)
 
-static FILE *send_stream;
-static int raw_volume;
-static boolean_t isreg;
-static boolean_t do_byteswap;
-
-/*
- * ssread - send stream read.
- *
- * Read while computing incremental checksum
- */
-static boolean_t
-ssread(void *buf, size_t len, zio_cksum_t *cksum)
-{
-	if (fread(buf, len, 1, send_stream) == 0)
-		return (B_FALSE);
-
-	if (do_byteswap)
-		fletcher_4_incremental_byteswap(buf, len, cksum);
-	else
-		fletcher_4_incremental_native(buf, len, cksum);
-	return (B_TRUE);
-}
-
-static inline void
-ssread_checked(void *buf, size_t len, zio_cksum_t *cksum)
-{
-	(void) ssread(buf, len, cksum);
-	if (ferror(send_stream))
-		err(EXIT_FAILURE, "fread");
-}
-
-static inline void
-pwrite_checked(void *buf, size_t nbytes, off_t offset)
-{
-	ASSERT3U(offset + nbytes, >=, offset);
-	ssize_t res = pwrite(raw_volume, buf, nbytes, offset);
-	if (res < 0)
-		err(EXIT_FAILURE, "pwrite");
-	ASSERT3U(res, ==, nbytes);
-}
-
-static void *zero_page;
-static long pagesize;
-static long iov_max;
+typedef struct {
+	int		raw_volume;
+	size_t		raw_volume_size;
+	boolean_t	isreg;
+	boolean_t	inprop;
+	boolean_t	inzvol;
+	void		*zero_page;
+	long		pagesize;
+	long		iov_max;
+	uint64_t	guid;
+	uint64_t	featureflags;
+} raw_context_t;
 
 /*
  * write_zeros - zero a region.
@@ -112,15 +78,15 @@ static long iov_max;
  * TODO: Optional secure erase, hole punching with fspacectl/fallocate/discard
  */
 static void
-write_zeros(off_t offset, size_t len)
+write_zeros(raw_context_t *context, off_t offset, size_t len)
 {
 	static struct iovec *iov = NULL;
-	int iovcnt = MIN(howmany(len, pagesize), iov_max);
+	int iovcnt = MIN(howmany(len, context->pagesize), context->iov_max);
 
 	ASSERT3U(offset + len, >=, offset);
 
 	if (iov == NULL)
-		iov = safe_malloc(iov_max * sizeof (*iov));
+		iov = safe_malloc(context->iov_max * sizeof (*iov));
 	if (iovcnt == 0)
 		return;
 
@@ -130,11 +96,11 @@ write_zeros(off_t offset, size_t len)
 		int i;
 
 		for (i = 0; i < iovcnt && resid > 0; i++) {
-			iov[i].iov_base = zero_page;
-			iov[i].iov_len = MIN(resid, pagesize);
+			iov[i].iov_base = context->zero_page;
+			iov[i].iov_len = MIN(resid, context->pagesize);
 			resid -= iov[i].iov_len;
 		}
-		ssize_t res = pwritev(raw_volume, iov, i, offset);
+		ssize_t res = pwritev(context->raw_volume, iov, i, offset);
 		if (res < 0)
 			err(EXIT_FAILURE, "pwritev");
 		iovsz -= resid;
@@ -145,7 +111,7 @@ write_zeros(off_t offset, size_t len)
 }
 
 static inline void
-extend(size_t size)
+extend(int raw_volume, size_t size)
 {
 	if (ftruncate(raw_volume, size) < 0)
 		err(EXIT_FAILURE, "ftruncate");
@@ -157,7 +123,7 @@ extend(size_t size)
  * Returns the value of the "size" property.
  */
 static uint64_t
-apply_properties(char *buf, size_t len)
+apply_properties(int raw_volume, uint8_t *buf, size_t len)
 {
 	const mzap_phys_t *mzap = (const mzap_phys_t *)buf;
 
@@ -171,70 +137,200 @@ apply_properties(char *buf, size_t len)
 	ASSERT0(strcmp(mzap->mz_chunk[0].mze_name, "size"));
 
 	uint64_t size = mzap->mz_chunk[0].mze_value;
-	extend(size);
+	extend(raw_volume, size);
 	return (size);
 }
 
-static boolean_t
-read_hdr(dmu_replay_record_t *drr, zio_cksum_t *cksum)
+static disposition_t
+raw_begin_record(drr_packet_t *item, raw_context_t *context)
 {
-	ASSERT3U(offsetof(dmu_replay_record_t, drr_u.drr_checksum.drr_checksum),
-	    ==, sizeof (dmu_replay_record_t) - sizeof (zio_cksum_t));
-	if (!ssread(drr, sizeof (*drr) - sizeof (zio_cksum_t), cksum))
-		return (B_FALSE);
-	zio_cksum_t saved_cksum = *cksum;
-	if (!ssread(&drr->drr_u.drr_checksum.drr_checksum, sizeof (zio_cksum_t),
-	    cksum))
-		return (B_FALSE);
-	if (!ZIO_CHECKSUM_IS_ZERO(&drr->drr_u.drr_checksum.drr_checksum) &&
-	    !ZIO_CHECKSUM_EQUAL(saved_cksum,
-	    drr->drr_u.drr_checksum.drr_checksum)) {
-		(void) fprintf(stderr, "invalid checksum\n");
-		(void) printf("Incorrect checksum in record header.\n");
-		(void) printf("Expected checksum = %llx/%llx/%llx/%llx\n",
-		    (longlong_t)saved_cksum.zc_word[0],
-		    (longlong_t)saved_cksum.zc_word[1],
-		    (longlong_t)saved_cksum.zc_word[2],
-		    (longlong_t)saved_cksum.zc_word[3]);
-		(void) printf("Aborting.\n");
-		exit(EXIT_FAILURE);
+	struct drr_begin *drrb = &item->dp_drr.drr_u.drr_begin;
+	context->featureflags =
+	    DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
+	drr_headertype_t hdrtype =
+	    DMU_GET_STREAM_HDRTYPE(drrb->drr_versioninfo);
+	uint64_t unsupported_features =
+	    context->featureflags & ~SUPPORTED_FEATURES;
+
+	if (unsupported_features != 0) {
+		errx(EXIT_FAILURE, "unsupported stream features: "
+		    "%#llx of %#llx, aborting...",
+		    (u_longlong_t)unsupported_features,
+		    (u_longlong_t)context->featureflags);
 	}
-	return (B_TRUE);
+	if (hdrtype == DMU_SUBSTREAM) {
+		boolean_t nonzero_guid = context->guid != 0;
+		boolean_t guid_mismatch = context->guid != drrb->drr_fromguid;
+		if (nonzero_guid && guid_mismatch) {
+			errx(EXIT_FAILURE, "wrong fromguid: %llu != %llu, "
+			    "aborting...",
+			    (u_longlong_t)drrb->drr_fromguid,
+			    (u_longlong_t)context->guid);
+		}
+		context->guid = drrb->drr_toguid;
+	}
+	return (D_OK);
+}
+
+static disposition_t
+raw_object_record(drr_packet_t *item, raw_context_t *context)
+{
+	struct drr_object *drro = &item->dp_drr.drr_u.drr_object;
+
+	if (context->featureflags & DMU_BACKUP_FEATURE_RAW &&
+	    drro->drr_bonuslen > drro->drr_raw_bonuslen) {
+		warnx("object %llu has bonuslen = "
+		    "%u > raw_bonuslen = %u\n",
+		    (u_longlong_t)drro->drr_object,
+		    drro->drr_bonuslen, drro->drr_raw_bonuslen);
+	}
+
+	context->inzvol = drro->drr_object == ZVOL_OBJ &&
+	    drro->drr_type == DMU_OT_ZVOL;
+	context->inprop = drro->drr_object == ZVOL_ZAP_OBJ &&
+	    drro->drr_type == DMU_OT_ZVOL_PROP;
+
+	return (D_OK);
+}
+
+static disposition_t
+raw_write_record(drr_packet_t *item, raw_context_t *context)
+{
+	struct drr_write *drrw = &item->dp_drr.drr_u.drr_write;
+
+	if (context->inprop && context->isreg) {
+		ASSERT0(drrw->drr_offset);
+		context->raw_volume_size = apply_properties(context->raw_volume,
+		    item->dp_payload, item->dp_payload_size);
+	}
+
+	if (context->inzvol) {
+		safe_pwrite(context->raw_volume, item->dp_payload,
+		    item->dp_payload_size, drrw->drr_offset);
+	}
+	return (D_OK);
+}
+
+static disposition_t
+raw_free_record(drr_packet_t *item, raw_context_t *context)
+{
+	struct drr_free *drrf = &item->dp_drr.drr_u.drr_free;
+
+	if (!context->inzvol)
+		return (D_OK);
+
+	off_t off = drrf->drr_offset;
+	size_t len = drrf->drr_length;
+	if (len == (size_t)-1) {
+		if (context->isreg) {
+			extend(context->raw_volume, off);
+			if (off < context->raw_volume_size)
+				extend(context->raw_volume,
+				    context->raw_volume_size);
+			else
+				context->raw_volume_size = off;
+		}
+		return (D_OK);
+	}
+	write_zeros(context, off, len);
+	return (D_OK);
+}
+
+static disposition_t
+raw_write_embedded_record(drr_packet_t *item, raw_context_t *context)
+{
+	struct drr_write_embedded *drrwe =
+	    &item->dp_drr.drr_u.drr_write_embedded;
+	uint32_t lsize = drrwe->drr_lsize;
+	uint8_t *debuff;
+
+	ASSERT3U(item->dp_payload_size, <=, lsize);
+
+	if (ctype_is_uncompressed(drrwe->drr_compression)) {
+		debuff = item->dp_payload;
+	} else {
+		debuff = decompress_buffer(item->dp_payload,
+		    item->dp_payload_size, lsize, drrwe->drr_compression);
+		if (debuff == NULL) {
+			err(EXIT_FAILURE, "decompression failed at offset %llu",
+			    (u_longlong_t)drrwe->drr_offset);
+		}
+	}
+
+	if (context->inprop && context->isreg) {
+		ASSERT0(drrwe->drr_offset);
+		context->raw_volume_size =
+		    apply_properties(context->raw_volume, debuff, lsize);
+	}
+
+	if (context->inzvol)
+		safe_pwrite(context->raw_volume, debuff, lsize,
+		    drrwe->drr_offset);
+
+	return (D_OK);
+}
+
+typedef disposition_t
+raw_record_handler_f(drr_packet_t *item, raw_context_t *context);
+
+static raw_record_handler_f *record_handlers[] = {
+	raw_begin_record,
+	raw_object_record,
+	NULL,				/* DRR_FREEOBJECTS */
+	raw_write_record,
+	raw_free_record,
+	NULL,				/* DRR_END */
+	NULL,				/* DRR_WRITE_BYREF */
+	NULL,				/* DRR_SPILL */
+	raw_write_embedded_record,
+	NULL,				/* DRR_OBJECT_RANGE */
+	NULL				/* DRR_REDACT */
+};
+
+static disposition_t
+chain_replay_raw(void *item_in, void *context_in)
+{
+	drr_packet_t *item = (drr_packet_t *)item_in;
+	raw_context_t *context = (raw_context_t *)context_in;
+
+	if (item == NULL)
+		return (D_OK);
+
+	raw_record_handler_f *handler = record_handlers[item->dp_drr.drr_type];
+	if (handler == NULL) {
+		/*
+		 * Shouldn't happen since we're after the drop filter, but
+		 * we can safely just ignore the record.
+		 */
+		return (D_OK);
+	}
+	return handler(item, context);
+}
+
+static chain_step_t
+serial_replay_raw(raw_context_t *context)
+{
+	chain_step_t step = {
+		.cs_type = CS_SERIAL,
+		.cs_in_size = sizeof (drr_packet_t),
+		.cs_out_size = sizeof (drr_packet_t),
+		.cs_context = context,
+		.cs_serial = {
+			.process = chain_replay_raw
+		}
+	};
+	return (step);
 }
 
 int
 zstream_do_raw(int argc, char *argv[])
 {
-	char *buf = safe_malloc(SPA_MAXBLOCKSIZE);
-	char *p, *lbuf = NULL;
-	size_t lsize, lbufsize = 0;
-	uint64_t payload_size;
-	dmu_replay_record_t thedrr;
-	dmu_replay_record_t *drr = &thedrr;
-	struct drr_begin *drrb = &thedrr.drr_u.drr_begin;
-	struct drr_end *drre = &thedrr.drr_u.drr_end;
-	struct drr_object *drro = &thedrr.drr_u.drr_object;
-	struct drr_freeobjects *drrfo = &thedrr.drr_u.drr_freeobjects;
-	struct drr_write *drrw = &thedrr.drr_u.drr_write;
-	struct drr_write_byref *drrwbr = &thedrr.drr_u.drr_write_byref;
-	struct drr_free *drrf = &thedrr.drr_u.drr_free;
-	struct drr_spill *drrs = &thedrr.drr_u.drr_spill;
-	struct drr_write_embedded *drrwe = &thedrr.drr_u.drr_write_embedded;
-	struct drr_object_range *drror = &thedrr.drr_u.drr_object_range;
-	struct drr_redact *drrr = &thedrr.drr_u.drr_redact;
-	struct drr_checksum *drrc = &thedrr.drr_u.drr_checksum;
-	uint64_t guid = 0;
-	drr_headertype_t hdrtype;
-	enum zio_compress compression;
-	boolean_t verbose = B_FALSE;
-	boolean_t first = B_TRUE;
-	boolean_t inzvol = B_FALSE;
-	boolean_t inprop = B_FALSE;
-	int error;
-	zio_cksum_t zc = { { 0 } };
-	zio_cksum_t pcksum = { { 0 } };
+	chain_attrs_t attrs = { 0 };
+
+	ENABLE_OPTION(&attrs, CA_FORBID_DEDUP);
 
 	int c;
+	uint64_t guid = 0;
 	while ((c = getopt(argc, argv, ":g:v")) != -1) {
 		switch (c) {
 		case 'g':
@@ -245,632 +341,76 @@ zstream_do_raw(int argc, char *argv[])
 			}
 			break;
 		case 'v':
-			verbose = B_TRUE;
+			ENABLE_OPTION(&attrs, CA_VERBOSE);
+			ENABLE_OPTION(&attrs, CA_DUMP_ALL_RECORDS);
+			ENABLE_OPTION(&attrs, CA_DUMP_CHECKSUMS);
 			break;
 		case ':':
-			(void) fprintf(stderr,
-			    "missing argument for '%c' option\n", optopt);
+			warnx("missing argument for '%c' option", optopt);
 			zstream_usage();
 			break;
 		case '?':
-			(void) fprintf(stderr, "invalid option '%c'\n",
-			    optopt);
+			warnx("invalid option '%c'", optopt);
 			zstream_usage();
 			break;
 		}
 	}
+
 	argc -= optind;
 	argv += optind;
-
 	if (argc < 1) {
-		(void) fprintf(stderr, "missing path to raw volume\n");
+		warnx("missing path to raw volume");
 		zstream_usage();
-		exit(EXIT_FAILURE);
 	}
+
+	const char *raw_path = argv[0];
+	struct stat64 st;
+	long pagesize = sysconf(_SC_PAGESIZE);
+
 	/*
 	 * TODO: O_DIRECT, maybe as a command line flag? Avoid O_CREAT in /dev?
 	 */
-	const char *raw_path = argv[0];
-	raw_volume = open(raw_path, O_WRONLY | O_CREAT, 0666);
+	int raw_volume = open(raw_path, O_WRONLY | O_CREAT, 0666);
 	if (raw_volume < 0) {
-		(void) fprintf(stderr, "Error while opening file '%s': %s\n",
-		    raw_path, strerror(errno));
-		exit(EXIT_FAILURE);
+		err(EXIT_FAILURE, "error while opening file '%s'", raw_path);
 	}
-	struct stat64 st;
 	if (fstat64_blk(raw_volume, &st) < 0)
 		err(EXIT_FAILURE, "fstat64_blk");
-	isreg = S_ISREG(st.st_mode);
-	if (argc > 1) {
-		const char *filename = argv[1];
-		send_stream = fopen(filename, "r");
-		if (send_stream == NULL) {
-			(void) fprintf(stderr,
-			    "Error while opening file '%s': %s\n",
-			    filename, strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-	} else {
-		if (isatty(STDIN_FILENO)) {
-			(void) fprintf(stderr,
-			    "Error: The send stream is a binary format "
-			    "and can not be read from a\n"
-			    "terminal.  Standard input must be redirected, "
-			    "or a file must be\n"
-			    "specified as a command-line argument.\n");
-			exit(EXIT_FAILURE);
-		}
-		send_stream = stdin;
-	}
 
-	pagesize = sysconf(_SC_PAGESIZE);
-	iov_max = sysconf(_SC_IOV_MAX);
-	zero_page = safe_calloc(pagesize);
+	raw_context_t context = {
+		.raw_volume	 = raw_volume,
+		.raw_volume_size = st.st_size,
+		.isreg		 = S_ISREG(st.st_mode),
+		.inprop		 = B_FALSE,
+		.inzvol		 = B_FALSE,
+		.zero_page	 = safe_calloc(pagesize),
+		.pagesize	 = pagesize,
+		.iov_max	 = sysconf(_SC_IOV_MAX),
+		.guid		 = guid
+	};
 
-	zfs_refcount_init();
-	abd_init();
-	fletcher_4_init();
-	zio_init();
-	zstd_init();
-	while (read_hdr(drr, &zc)) {
-		uint64_t featureflags = 0;
+	uint32_t drop_mask = DROP_DRR_END | DROP_DRR_FREEOBJECTS |
+	    DROP_DRR_SPILL | DROP_DRR_OBJECT_RANGE | DROP_DRR_REDACT;
 
-		/*
-		 * If this is the first DMU record being processed, check for
-		 * the magic bytes and figure out the endian-ness based on them.
-		 */
-		if (first) {
-			if (drrb->drr_magic == BSWAP_64(DMU_BACKUP_MAGIC)) {
-				do_byteswap = B_TRUE;
-				ZIO_SET_CHECKSUM(&zc, 0, 0, 0, 0);
-				/*
-				 * recalculate header checksum now
-				 * that we know it needs to be
-				 * byteswapped.
-				 */
-				fletcher_4_incremental_byteswap(drr,
-				    sizeof (dmu_replay_record_t), &zc);
-			} else if (drrb->drr_magic != DMU_BACKUP_MAGIC) {
-				(void) fprintf(stderr, "Invalid stream "
-				    "(bad magic number)\n");
-				exit(EXIT_FAILURE);
-			}
-			first = B_FALSE;
-		}
-		if (do_byteswap) {
-			drr->drr_type = BSWAP_32(drr->drr_type);
-			drr->drr_payloadlen =
-			    BSWAP_32(drr->drr_payloadlen);
-		}
+	zstream_chain_t raw_chain = {
+		STANDARD_INPUT_STACK((argc > 1) ? argv[1] : NULL),
+		serial_dump_records(),
+		serial_drop_record_types(drop_mask),
+		parallel_decompress_writes(NULL),
+		serial_replay_raw(&context),
+		NULL_OUTPUT_STACK()
+	};
 
-		/*
-		 * At this point, the leading fields of the replay record
-		 * (drr_type and drr_payloadlen) have been byte-swapped if
-		 * necessary, but the rest of the data structure (the
-		 * union of type-specific structures) is still in its
-		 * original state.
-		 */
-		if (drr->drr_type >= DRR_NUMTYPES) {
-			(void) printf("INVALID record found: type 0x%x\n",
-			    drr->drr_type);
-			(void) printf("Aborting.\n");
-			exit(EXIT_FAILURE);
-		}
-
-		payload_size = 0;
-
-		switch (drr->drr_type) {
-		case DRR_BEGIN:
-			if (do_byteswap) {
-				drrb->drr_magic = BSWAP_64(drrb->drr_magic);
-				drrb->drr_versioninfo =
-				    BSWAP_64(drrb->drr_versioninfo);
-				drrb->drr_creation_time =
-				    BSWAP_64(drrb->drr_creation_time);
-				drrb->drr_type = BSWAP_32(drrb->drr_type);
-				drrb->drr_flags = BSWAP_32(drrb->drr_flags);
-				drrb->drr_toguid = BSWAP_64(drrb->drr_toguid);
-				drrb->drr_fromguid =
-				    BSWAP_64(drrb->drr_fromguid);
-			}
-
-			hdrtype = DMU_GET_STREAM_HDRTYPE(drrb->drr_versioninfo);
-			featureflags =
-			    DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
-
-			if (verbose) {
-				(void) printf("BEGIN record\n");
-				(void) printf("\thdrtype = %d\n", hdrtype);
-				(void) printf("\tfeatures = %llx\n",
-				    (u_longlong_t)featureflags);
-				(void) printf("\tmagic = %llx\n",
-				    (u_longlong_t)drrb->drr_magic);
-				(void) printf("\tcreation_time = %llx\n",
-				    (u_longlong_t)drrb->drr_creation_time);
-				(void) printf("\ttype = %u\n", drrb->drr_type);
-				(void) printf("\tflags = 0x%x\n",
-				    drrb->drr_flags);
-				(void) printf("\ttoguid = %llx\n",
-				    (u_longlong_t)drrb->drr_toguid);
-				(void) printf("\tfromguid = %llx\n",
-				    (u_longlong_t)drrb->drr_fromguid);
-				(void) printf("\ttoname = %s\n",
-				    drrb->drr_toname);
-				(void) printf("\tpayloadlen = %u\n",
-				    drr->drr_payloadlen);
-				(void) printf("\n");
-			}
-
-			uint64_t unsupported_features =
-			    featureflags & ~SUPPORTED_FEATURES;
-			if (unsupported_features != 0) {
-				(void) fprintf(stderr,
-				    "Unsupported stream features: "
-				    "%#llx of %#llx\n",
-				    (u_longlong_t)unsupported_features,
-				    (u_longlong_t)featureflags);
-				(void) printf("Aborting.\n");
-				exit(EXIT_FAILURE);
-			}
-			if (hdrtype == DMU_SUBSTREAM) {
-				if (guid != 0 && drrb->drr_fromguid != guid) {
-					(void) fprintf(stderr,
-					    "Wrong fromguid: %llu != %llu\n",
-					    (u_longlong_t)drrb->drr_fromguid,
-					    (u_longlong_t)guid);
-					(void) printf("Aborting.\n");
-					exit(EXIT_FAILURE);
-				}
-				guid = drrb->drr_toguid;
-			}
-
-			if (drr->drr_payloadlen != 0) {
-				nvlist_t *nv;
-				int sz = drr->drr_payloadlen;
-
-				if (sz > SPA_MAXBLOCKSIZE) {
-					free(buf);
-					buf = safe_malloc(sz);
-				}
-				ssread_checked(buf, sz, &zc);
-				error = nvlist_unpack(buf, sz, &nv, 0);
-				if (error) {
-					errno = error;
-					err(EXIT_FAILURE, "nvlist_unpack");
-				} else {
-					nvlist_print(stdout, nv);
-					nvlist_free(nv);
-				}
-				payload_size = sz;
-			}
-			break;
-
-		case DRR_END:
-			if (do_byteswap) {
-				drre->drr_checksum.zc_word[0] =
-				    BSWAP_64(drre->drr_checksum.zc_word[0]);
-				drre->drr_checksum.zc_word[1] =
-				    BSWAP_64(drre->drr_checksum.zc_word[1]);
-				drre->drr_checksum.zc_word[2] =
-				    BSWAP_64(drre->drr_checksum.zc_word[2]);
-				drre->drr_checksum.zc_word[3] =
-				    BSWAP_64(drre->drr_checksum.zc_word[3]);
-			}
-			/*
-			 * We compare against the *previous* checksum
-			 * value, because the stored checksum is of
-			 * everything before the DRR_END record.
-			 */
-			if (!ZIO_CHECKSUM_EQUAL(drre->drr_checksum, pcksum)) {
-				(void) printf("Expected checksum differs from "
-				    "checksum in stream.\n");
-				(void) printf("Expected checksum = "
-				    "%llx/%llx/%llx/%llx\n",
-				    (long long unsigned int)pcksum.zc_word[0],
-				    (long long unsigned int)pcksum.zc_word[1],
-				    (long long unsigned int)pcksum.zc_word[2],
-				    (long long unsigned int)pcksum.zc_word[3]);
-				(void) printf("Aborting.\n");
-				exit(EXIT_FAILURE);
-			}
-			ZIO_SET_CHECKSUM(&zc, 0, 0, 0, 0);
-			break;
-
-		case DRR_OBJECT:
-			if (do_byteswap) {
-				drro->drr_object = BSWAP_64(drro->drr_object);
-				drro->drr_type = BSWAP_32(drro->drr_type);
-				drro->drr_bonustype =
-				    BSWAP_32(drro->drr_bonustype);
-				drro->drr_blksz = BSWAP_32(drro->drr_blksz);
-				drro->drr_bonuslen =
-				    BSWAP_32(drro->drr_bonuslen);
-				drro->drr_raw_bonuslen =
-				    BSWAP_32(drro->drr_raw_bonuslen);
-				drro->drr_toguid = BSWAP_64(drro->drr_toguid);
-				drro->drr_maxblkid =
-				    BSWAP_64(drro->drr_maxblkid);
-			}
-
-			if (featureflags & DMU_BACKUP_FEATURE_RAW &&
-			    drro->drr_bonuslen > drro->drr_raw_bonuslen) {
-				(void) fprintf(stderr,
-				    "Warning: Object %llu has bonuslen = "
-				    "%u > raw_bonuslen = %u\n\n",
-				    (u_longlong_t)drro->drr_object,
-				    drro->drr_bonuslen, drro->drr_raw_bonuslen);
-			}
-
-			payload_size = DRR_OBJECT_PAYLOAD_SIZE(drro);
-
-			if (verbose) {
-				(void) printf("OBJECT object = %llu type = %u "
-				    "bonustype = %u blksz = %u bonuslen = %u "
-				    "dn_slots = %u raw_bonuslen = %u "
-				    "flags = %u maxblkid = %llu "
-				    "indblkshift = %u nlevels = %u "
-				    "nblkptr = %u\n",
-				    (u_longlong_t)drro->drr_object,
-				    drro->drr_type,
-				    drro->drr_bonustype,
-				    drro->drr_blksz,
-				    drro->drr_bonuslen,
-				    drro->drr_dn_slots,
-				    drro->drr_raw_bonuslen,
-				    drro->drr_flags,
-				    (u_longlong_t)drro->drr_maxblkid,
-				    drro->drr_indblkshift,
-				    drro->drr_nlevels,
-				    drro->drr_nblkptr);
-			}
-			if (drro->drr_bonuslen > 0)
-				ssread_checked(buf, payload_size, &zc);
-			inzvol = drro->drr_object == ZVOL_OBJ &&
-			    drro->drr_type == DMU_OT_ZVOL;
-			inprop = drro->drr_object == ZVOL_ZAP_OBJ &&
-			    drro->drr_type == DMU_OT_ZVOL_PROP;
-			break;
-
-		case DRR_FREEOBJECTS:
-			if (do_byteswap) {
-				drrfo->drr_firstobj =
-				    BSWAP_64(drrfo->drr_firstobj);
-				drrfo->drr_numobjs =
-				    BSWAP_64(drrfo->drr_numobjs);
-				drrfo->drr_toguid = BSWAP_64(drrfo->drr_toguid);
-			}
-			if (verbose) {
-				(void) printf("FREEOBJECTS firstobj = %llu "
-				    "numobjs = %llu\n",
-				    (u_longlong_t)drrfo->drr_firstobj,
-				    (u_longlong_t)drrfo->drr_numobjs);
-			}
-			break;
-
-		case DRR_WRITE:
-			if (do_byteswap) {
-				drrw->drr_object = BSWAP_64(drrw->drr_object);
-				drrw->drr_type = BSWAP_32(drrw->drr_type);
-				drrw->drr_offset = BSWAP_64(drrw->drr_offset);
-				drrw->drr_logical_size =
-				    BSWAP_64(drrw->drr_logical_size);
-				drrw->drr_toguid = BSWAP_64(drrw->drr_toguid);
-				drrw->drr_key.ddk_prop =
-				    BSWAP_64(drrw->drr_key.ddk_prop);
-				drrw->drr_compressed_size =
-				    BSWAP_64(drrw->drr_compressed_size);
-			}
-
-			payload_size = DRR_WRITE_PAYLOAD_SIZE(drrw);
-
-			/*
-			 * If this is verbose output,
-			 * print info on the modified block
-			 */
-			if (verbose) {
-				(void) printf("WRITE object = %llu type = %u "
-				    "checksum type = %u compression type = %u "
-				    "flags = %u offset = %llu "
-				    "logical_size = %llu "
-				    "compressed_size = %llu "
-				    "payload_size = %llu props = %llx\n",
-				    (u_longlong_t)drrw->drr_object,
-				    drrw->drr_type,
-				    drrw->drr_checksumtype,
-				    drrw->drr_compressiontype,
-				    drrw->drr_flags,
-				    (u_longlong_t)drrw->drr_offset,
-				    (u_longlong_t)drrw->drr_logical_size,
-				    (u_longlong_t)drrw->drr_compressed_size,
-				    (u_longlong_t)payload_size,
-				    (u_longlong_t)drrw->drr_key.ddk_prop);
-			}
-
-			/*
-			 * Read the contents of the block in to buf
-			 */
-			ssread_checked(buf, payload_size, &zc);
-
-			lsize = drrw->drr_logical_size;
-			ASSERT3U(payload_size, <=, lsize);
-
-			compression = drrw->drr_compressiontype;
-			if (compression == 0 ||
-			    compression == ZIO_COMPRESS_OFF) {
-				p = buf;
-			} else {
-				if (lbufsize < lsize) {
-					lbuf = safe_realloc(lbuf, lsize);
-					lbufsize = lsize;
-				}
-
-				abd_t sabd, dabd;
-				abd_get_from_buf_struct(&sabd, buf,
-				    payload_size);
-				abd_get_from_buf_struct(&dabd, lbuf, lsize);
-				error = zio_decompress_data(compression, &sabd,
-				    &dabd, payload_size, lsize, NULL);
-				abd_free(&dabd);
-				abd_free(&sabd);
-
-				if (error != 0) {
-					(void) fprintf(stderr,
-					    "Decompression failed "
-					    "at offset %llu: %s\n",
-					    (u_longlong_t)drrw->drr_offset,
-					    strerror(error));
-					(void) printf("Aborting.\n");
-					exit(EXIT_FAILURE);
-				}
-				p = lbuf;
-			}
-
-			if (inprop && isreg) {
-				ASSERT0(drrw->drr_offset);
-				st.st_size = apply_properties(p, lsize);
-			}
-
-			if (!inzvol)
-				break;
-
-			pwrite_checked(p, lsize, drrw->drr_offset);
-			break;
-
-		case DRR_WRITE_BYREF:
-			if (do_byteswap) {
-				drrwbr->drr_object =
-				    BSWAP_64(drrwbr->drr_object);
-				drrwbr->drr_offset =
-				    BSWAP_64(drrwbr->drr_offset);
-				drrwbr->drr_length =
-				    BSWAP_64(drrwbr->drr_length);
-				drrwbr->drr_toguid =
-				    BSWAP_64(drrwbr->drr_toguid);
-				drrwbr->drr_refguid =
-				    BSWAP_64(drrwbr->drr_refguid);
-				drrwbr->drr_refobject =
-				    BSWAP_64(drrwbr->drr_refobject);
-				drrwbr->drr_refoffset =
-				    BSWAP_64(drrwbr->drr_refoffset);
-				drrwbr->drr_key.ddk_prop =
-				    BSWAP_64(drrwbr->drr_key.ddk_prop);
-			}
-			if (verbose) {
-				(void) printf("WRITE_BYREF object = %llu "
-				    "checksum type = %u props = %llx "
-				    "offset = %llu length = %llu "
-				    "toguid = %llx refguid = %llx "
-				    "refobject = %llu refoffset = %llu\n",
-				    (u_longlong_t)drrwbr->drr_object,
-				    drrwbr->drr_checksumtype,
-				    (u_longlong_t)drrwbr->drr_key.ddk_prop,
-				    (u_longlong_t)drrwbr->drr_offset,
-				    (u_longlong_t)drrwbr->drr_length,
-				    (u_longlong_t)drrwbr->drr_toguid,
-				    (u_longlong_t)drrwbr->drr_refguid,
-				    (u_longlong_t)drrwbr->drr_refobject,
-				    (u_longlong_t)drrwbr->drr_refoffset);
-			}
-			break;
-
-		case DRR_FREE:
-			if (do_byteswap) {
-				drrf->drr_object = BSWAP_64(drrf->drr_object);
-				drrf->drr_offset = BSWAP_64(drrf->drr_offset);
-				drrf->drr_length = BSWAP_64(drrf->drr_length);
-			}
-			if (verbose) {
-				(void) printf("FREE object = %llu "
-				    "offset = %llu length = %lld\n",
-				    (u_longlong_t)drrf->drr_object,
-				    (u_longlong_t)drrf->drr_offset,
-				    (longlong_t)drrf->drr_length);
-			}
-
-			if (!inzvol)
-				break;
-
-			off_t off = drrf->drr_offset;
-			size_t len = drrf->drr_length;
-			if (len == (size_t)-1) {
-				if (isreg) {
-					extend(off);
-					if (off < st.st_size)
-						extend(st.st_size);
-					else
-						st.st_size = off;
-				}
-				break;
-			}
-			write_zeros(off, len);
-			break;
-
-		case DRR_SPILL:
-			if (do_byteswap) {
-				drrs->drr_object = BSWAP_64(drrs->drr_object);
-				drrs->drr_length = BSWAP_64(drrs->drr_length);
-				drrs->drr_compressed_size =
-				    BSWAP_64(drrs->drr_compressed_size);
-				drrs->drr_type = BSWAP_32(drrs->drr_type);
-			}
-
-			payload_size = DRR_SPILL_PAYLOAD_SIZE(drrs);
-
-			if (verbose) {
-				(void) printf("SPILL block for object = %llu "
-				    "length = %llu flags = %u "
-				    "compression type = %u "
-				    "compressed_size = %llu "
-				    "payload_size = %llu\n",
-				    (u_longlong_t)drrs->drr_object,
-				    (u_longlong_t)drrs->drr_length,
-				    drrs->drr_flags,
-				    drrs->drr_compressiontype,
-				    (u_longlong_t)drrs->drr_compressed_size,
-				    (u_longlong_t)payload_size);
-			}
-			ssread_checked(buf, payload_size, &zc);
-			break;
-
-		case DRR_WRITE_EMBEDDED:
-			if (do_byteswap) {
-				drrwe->drr_object =
-				    BSWAP_64(drrwe->drr_object);
-				drrwe->drr_offset =
-				    BSWAP_64(drrwe->drr_offset);
-				drrwe->drr_length =
-				    BSWAP_64(drrwe->drr_length);
-				drrwe->drr_toguid =
-				    BSWAP_64(drrwe->drr_toguid);
-				drrwe->drr_lsize =
-				    BSWAP_32(drrwe->drr_lsize);
-				drrwe->drr_psize =
-				    BSWAP_32(drrwe->drr_psize);
-			}
-			if (verbose) {
-				(void) printf("WRITE_EMBEDDED object = %llu "
-				    "offset = %llu length = %llu "
-				    "toguid = %llx comp = %u etype = %u "
-				    "lsize = %u psize = %u\n",
-				    (u_longlong_t)drrwe->drr_object,
-				    (u_longlong_t)drrwe->drr_offset,
-				    (u_longlong_t)drrwe->drr_length,
-				    (u_longlong_t)drrwe->drr_toguid,
-				    drrwe->drr_compression,
-				    drrwe->drr_etype,
-				    drrwe->drr_lsize,
-				    drrwe->drr_psize);
-			}
-
-			payload_size = P2ROUNDUP(drrwe->drr_psize, 8);
-
-			ssread_checked(buf, payload_size, &zc);
-
-			lsize = drrwe->drr_lsize;
-			ASSERT3U(payload_size, <=, lsize);
-
-			compression = drrwe->drr_compression;
-			if (compression == 0 ||
-			    compression == ZIO_COMPRESS_OFF) {
-				p = buf;
-			} else {
-				if (lbufsize < lsize) {
-					lbuf = safe_realloc(lbuf, lsize);
-					lbufsize = lsize;
-				}
-
-				abd_t sabd, dabd;
-				abd_get_from_buf_struct(&sabd, buf,
-				    payload_size);
-				abd_get_from_buf_struct(&dabd, lbuf, lsize);
-				error = zio_decompress_data(compression, &sabd,
-				    &dabd, payload_size, lsize, NULL);
-				abd_free(&dabd);
-				abd_free(&sabd);
-
-				if (error != 0) {
-					(void) fprintf(stderr,
-					    "Decompression failed "
-					    "at offset %llu: %s\n",
-					    (u_longlong_t)drrwe->drr_offset,
-					    strerror(error));
-					(void) printf("Aborting.\n");
-					exit(EXIT_FAILURE);
-				}
-				p = lbuf;
-			}
-
-			if (inprop && isreg) {
-				ASSERT0(drrwe->drr_offset);
-				st.st_size = apply_properties(p, lsize);
-			}
-
-			if (!inzvol)
-				break;
-
-			pwrite_checked(p, lsize, drrwe->drr_offset);
-			break;
-
-		case DRR_OBJECT_RANGE:
-			if (do_byteswap) {
-				drror->drr_firstobj =
-				    BSWAP_64(drror->drr_firstobj);
-				drror->drr_numslots =
-				    BSWAP_64(drror->drr_numslots);
-				drror->drr_toguid = BSWAP_64(drror->drr_toguid);
-			}
-			if (verbose) {
-				(void) printf("OBJECT_RANGE firstobj = %llu "
-				    "numslots = %llu flags = %u\n",
-				    (u_longlong_t)drror->drr_firstobj,
-				    (u_longlong_t)drror->drr_numslots,
-				    drror->drr_flags);
-			}
-			break;
-
-		case DRR_REDACT:
-			if (do_byteswap) {
-				drrr->drr_object = BSWAP_64(drrr->drr_object);
-				drrr->drr_offset = BSWAP_64(drrr->drr_offset);
-				drrr->drr_length = BSWAP_64(drrr->drr_length);
-				drrr->drr_toguid = BSWAP_64(drrr->drr_toguid);
-			}
-			if (verbose) {
-				(void) printf("REDACT object = %llu offset = "
-				    "%llu length = %llu\n",
-				    (u_longlong_t)drrr->drr_object,
-				    (u_longlong_t)drrr->drr_offset,
-				    (u_longlong_t)drrr->drr_length);
-			}
-			break;
-
-		case DRR_NUMTYPES:
-			/* should never be reached */
-			exit(EXIT_FAILURE);
-		}
-		if (verbose && drr->drr_type != DRR_BEGIN) {
-			(void) printf("    checksum = %llx/%llx/%llx/%llx\n",
-			    (longlong_t)drrc->drr_checksum.zc_word[0],
-			    (longlong_t)drrc->drr_checksum.zc_word[1],
-			    (longlong_t)drrc->drr_checksum.zc_word[2],
-			    (longlong_t)drrc->drr_checksum.zc_word[3]);
-		}
-		pcksum = zc;
-	}
-	free(buf);
-	free(lbuf);
-	fletcher_4_fini();
-	zio_fini();
-	zstd_fini();
-	abd_fini();
-	zfs_refcount_fini();
+	zstream_chain_exec(raw_chain, &attrs);
 
 	if (fsync(raw_volume) != 0)
 		err(EXIT_FAILURE, "fsync");
 
-	if (verbose)
-		(void) printf("now at guid %llu\n", (u_longlong_t)guid);
+	if (OPTION_ENABLED(CA_VERBOSE))
+		(void) printf("now at guid %llu\n",
+		    (u_longlong_t)context.guid);
 	else
-		(void) printf("%llu\n", (u_longlong_t)guid);
+		(void) printf("%llu\n", (u_longlong_t)context.guid);
+
 	return (EXIT_SUCCESS);
 }

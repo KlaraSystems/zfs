@@ -80,6 +80,16 @@ safe_realloc(void *from, size_t size)
 	return (data);
 }
 
+void
+safe_pwrite(int raw_volume, void *buf, size_t nbytes, off_t offset)
+{
+	ASSERT3U(offset + nbytes, >=, offset);
+	ssize_t res = pwrite(raw_volume, buf, nbytes, offset);
+	if (res < 0)
+		err(EXIT_FAILURE, "pwrite");
+	ASSERT3U(res, ==, nbytes);
+}
+
 char *
 checksum_str(zio_cksum_t *cksum, char *buff, size_t buff_size)
 {
