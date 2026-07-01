@@ -168,6 +168,7 @@ uint64_t dsl_pool_deferred_space(dsl_pool_t *dp);
 void dsl_pool_wrlog_count(dsl_pool_t *dp, int64_t size, uint64_t txg);
 boolean_t dsl_pool_need_wrlog_delay(dsl_pool_t *dp);
 void dsl_pool_dirty_space(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx);
+void dsl_pool_dirty_space_force(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx);
 void dsl_pool_undirty_space(dsl_pool_t *dp, int64_t space, uint64_t txg);
 void dsl_free(dsl_pool_t *dp, uint64_t txg, const blkptr_t *bpp);
 void dsl_free_sync(zio_t *pio, dsl_pool_t *dp, uint64_t txg,

@@ -3047,6 +3047,24 @@ dmu_objset_willuse_space(objset_t *os, int64_t space, dmu_tx_t *tx)
 }
 
 /*
+ * Call when we need to undo a space increase from the previous call.
+ * This is only used by the ZIL to prevent overcounting space used by ITXs when
+ * we manage to coalesce them successfully.
+ */
+void
+dmu_objset_wontuse_space(objset_t *os, int64_t space, dmu_tx_t *tx)
+{
+	dsl_dataset_t *ds = os->os_dsl_dataset;
+	int64_t aspace = spa_get_worst_case_asize(os->os_spa, space);
+
+	if (ds != NULL) {
+		dsl_dir_willuse_space_force(ds->ds_dir, aspace, tx);
+	}
+
+	dsl_pool_dirty_space_force(dmu_tx_pool(tx), space, tx);
+}
+
+/*
  * Check if a block is shared with a snapshot in this objset.
  * Returns B_TRUE if block was created before or at the time of the
  * previous snapshot, B_FALSE otherwise.

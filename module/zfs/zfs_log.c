@@ -670,6 +670,19 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 			}
 		}
 
+		boolean_t db_exit = B_FALSE;
+		if (wr_state == WR_NEED_COPY || wr_state == WR_INDIRECT) {
+			DB_DNODE_ENTER(db);
+			uint64_t maxblkid = DB_DNODE(db)->dn_maxblkid;
+			if (maxblkid > 0) {
+				db_exit = B_TRUE;
+				itx->itx_coalesce_align = blocksize;
+				itx->itx_dnode = DB_DNODE(db);
+			} else {
+				DB_DNODE_EXIT(db);
+			}
+		}
+
 		log_size += itx->itx_size;
 		if (wr_state == WR_NEED_COPY)
 			log_size += len;
@@ -691,6 +704,9 @@ zfs_log_write(zilog_t *zilog, dmu_tx_t *tx, int txtype,
 		}
 
 		zil_itx_assign(zilog, itx, tx);
+		if (db_exit) {
+			DB_DNODE_EXIT(db);
+		}
 
 		off += len;
 		resid -= len;

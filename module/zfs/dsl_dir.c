@@ -1509,15 +1509,16 @@ dsl_dir_tempreserve_clear(void *tr_cookie, dmu_tx_t *tx)
  * version however it has been adjusted to use an iterative rather than
  * recursive algorithm to minimize stack usage.
  */
-void
-dsl_dir_willuse_space(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
+static void
+dsl_dir_willuse_space_impl(dsl_dir_t *dd, int64_t space, boolean_t force,
+    dmu_tx_t *tx)
 {
 	int64_t parent_space;
 	uint64_t est_used;
 
 	do {
 		mutex_enter(&dd->dd_lock);
-		if (space > 0)
+		if (force || space > 0)
 			dd->dd_space_towrite[tx->tx_txg & TXG_MASK] += space;
 
 		est_used = dsl_dir_space_towrite(dd) +
@@ -1531,6 +1532,18 @@ dsl_dir_willuse_space(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
 		dd = dd->dd_parent;
 		space = parent_space;
 	} while (space && dd);
+}
+
+void
+dsl_dir_willuse_space(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
+{
+	dsl_dir_willuse_space_impl(dd, space, B_FALSE, tx);
+}
+
+void
+dsl_dir_willuse_space_force(dsl_dir_t *dd, int64_t space, dmu_tx_t *tx)
+{
+	dsl_dir_willuse_space_impl(dd, space, B_TRUE, tx);
 }
 
 /* call from syncing context when we actually write/free space for this dd */

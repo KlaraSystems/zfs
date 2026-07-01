@@ -820,7 +820,7 @@ dsl_pool_sync(dsl_pool_t *dp, uint64_t txg)
 
 	/*
 	 * We have written all of the accounted dirty data, so our
-	 * dp_space_towrite should now be zero. However, some seldom-used
+	 * dp_dirty_pertxg should now be zero. However, some seldom-used
 	 * code paths do not adhere to this (e.g. dbuf_undirty()). Shore up
 	 * the accounting of any dirtied space now.
 	 *
@@ -987,10 +987,11 @@ dsl_pool_need_dirty_sync(dsl_pool_t *dp, uint64_t txg)
 	return (dirty > dirty_min_bytes);
 }
 
-void
-dsl_pool_dirty_space(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx)
+static void
+dsl_pool_dirty_space_impl(dsl_pool_t *dp, int64_t space, boolean_t force,
+    dmu_tx_t *tx)
 {
-	if (space > 0) {
+	if (force || space > 0) {
 		mutex_enter(&dp->dp_lock);
 		dp->dp_dirty_pertxg[tx->tx_txg & TXG_MASK] += space;
 		dsl_pool_dirty_delta(dp, space);
@@ -1001,6 +1002,18 @@ dsl_pool_dirty_space(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx)
 		if (needsync)
 			txg_kick(dp, tx->tx_txg);
 	}
+}
+
+void
+dsl_pool_dirty_space(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx)
+{
+	dsl_pool_dirty_space_impl(dp, space, B_FALSE, tx);
+}
+
+void
+dsl_pool_dirty_space_force(dsl_pool_t *dp, int64_t space, dmu_tx_t *tx)
+{
+	dsl_pool_dirty_space_impl(dp, space, B_TRUE, tx);
 }
 
 void

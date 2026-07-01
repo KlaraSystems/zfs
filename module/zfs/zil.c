@@ -41,6 +41,7 @@
 #include <sys/dsl_dataset.h>
 #include <sys/vdev_impl.h>
 #include <sys/dmu_tx.h>
+#include <sys/dbuf.h>
 #include <sys/dsl_pool.h>
 #include <sys/metaslab.h>
 #include <sys/trace_zfs.h>
@@ -2562,6 +2563,8 @@ zil_itx_create(uint64_t txtype, size_t olrsize)
 	itx->itx_callback = NULL;
 	itx->itx_callback_data = NULL;
 	itx->itx_size = itxsize;
+	itx->itx_coalesce_align = 0;
+	itx->itx_dnode = NULL;
 
 	return (itx);
 }
@@ -2769,6 +2772,38 @@ zil_itx_assign(zilog_t *zilog, itx_t *itx, dmu_tx_t *tx)
 			    offsetof(itx_t, itx_node));
 			ian->ia_foid = foid;
 			avl_insert(t, ian, where);
+		}
+		itx_t *cur_tail = list_tail(&ian->ia_list);
+		if (cur_tail && cur_tail->itx_coalesce_align &&
+		    itx->itx_coalesce_align &&
+		    cur_tail->itx_lr.lrc_txtype == itx->itx_lr.lrc_txtype) {
+			ASSERT3U(itx->itx_lr.lrc_txtype, ==, TX_WRITE);
+			ASSERT3U(cur_tail->itx_lr.lrc_txtype, ==, TX_WRITE);
+			ASSERT3U(cur_tail->itx_coalesce_align, ==,
+			    itx->itx_coalesce_align);
+			lr_write_t *new_lr = (lr_write_t *)(&itx->itx_lr);
+			lr_write_t *tail_lr = (lr_write_t *)(&cur_tail->itx_lr);
+			ASSERT3U(new_lr->lr_foid, ==, tail_lr->lr_foid);
+
+			uint64_t coal = itx->itx_coalesce_align;
+			uint64_t start = tail_lr->lr_offset;
+			uint64_t end = new_lr->lr_offset + new_lr->lr_length -
+			    1;
+			if (start / coal == end / coal && new_lr->lr_offset ==
+			    tail_lr->lr_offset + tail_lr->lr_length &&
+			    dmu_tx_get_txg(tx) == cur_tail->itx_lr.lrc_txg) {
+				dnode_t *dn = itx->itx_dnode;
+				tail_lr->lr_length += new_lr->lr_length;
+				zil_itx_destroy(itx, 0);
+				itx = cur_tail;
+				list_remove(&ian->ia_list, cur_tail);
+				dmu_buf_t *dbp;
+				dmu_buf_hold_by_dnode(dn, start,
+				    FTAG, &dbp, DMU_READ_PREFETCH);
+				dbuf_unredirty(dbp, tx);
+				dmu_buf_rele(dbp, FTAG);
+			}
+
 		}
 		list_insert_tail(&ian->ia_list, itx);
 	}
