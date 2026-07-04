@@ -68,7 +68,7 @@ log_assert "<user|group> is interpreted as user if possible, then as group."
 log_onexit cleanup
 
 eval set -A dataset $DATASETS
-typeset perms="snapshot,reservation,compression,checksum,send,userprop"
+typeset perms="snapshot,reservation,compression,checksum,send,userprop,redact"
 
 log_must add_user $STAFF_GROUP $STAFF_GROUP
 for dtst in $DATASETS ; do
