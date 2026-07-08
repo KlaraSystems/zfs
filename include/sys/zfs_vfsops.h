@@ -81,6 +81,8 @@ zfsvfs_lockout_error(zfsvfs_t *zfsvfs)
 	switch (atomic_load_64(&zfsvfs->z_os->os_spa->spa_lockout)) {
 	case LOCKOUT_READONLY:
 		return (SET_ERROR(EROFS));
+	case LOCKOUT_SUSPEND:
+		return (SET_ERROR(EIO));
 	default:
 		/* XXX idk I guess? -- robn, 2024-07-09 */
 		return (SET_ERROR(EAGAIN));

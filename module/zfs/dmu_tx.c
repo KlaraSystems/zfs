@@ -1336,7 +1336,8 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 		 */
 		if (err != ERESTART || !(flags & DMU_TX_WAIT)) {
 			ASSERT(err == EDQUOT || err == ENOSPC ||
-			    err == ERESTART || err == EIO || err == EROFS || err == EAGAIN);
+			    err == ERESTART || err == EIO || err == EROFS ||
+			    err == EAGAIN);
 			return (err);
 		}
 
