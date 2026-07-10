@@ -66,6 +66,8 @@ typedef struct traverse_data {
 	uint64_t td_hole_birth_enabled_txg;
 	blkptr_cb_t *td_func;
 	void *td_arg;
+	traverse_filter_t *td_filter;
+	void *td_filter_arg;
 	boolean_t td_realloc_possible;
 } traverse_data_t;
 
@@ -175,6 +177,14 @@ resume_skip_check(const traverse_data_t *td, const dnode_phys_t *dnp,
 	return (RESUME_SKIP_NONE);
 }
 
+static boolean_t
+traverse_filtered_out(traverse_data_t *td, const blkptr_t *bp,
+    const zbookmark_phys_t *zb, const dnode_phys_t *dnp)
+{
+	return (td->td_filter != NULL &&
+	    !td->td_filter(td->td_spa, bp, zb, dnp, td->td_filter_arg));
+}
+
 /*
  * Returns B_TRUE, if prefetch read is issued, otherwise B_FALSE.
  */
@@ -197,6 +207,8 @@ traverse_prefetch_metadata(traverse_data_t *td, const dnode_phys_t *dnp,
 	if (BP_IS_HOLE(bp) || BP_GET_LOGICAL_BIRTH(bp) <= td->td_min_txg)
 		return (B_FALSE);
 	if (BP_GET_LEVEL(bp) == 0 && BP_GET_TYPE(bp) != DMU_OT_DNODE)
+		return (B_FALSE);
+	if (traverse_filtered_out(td, bp, zb, dnp))
 		return (B_FALSE);
 	ASSERT(!BP_IS_REDACTED(bp));
 
@@ -268,6 +280,9 @@ traverse_visitbp(traverse_data_t *td, const dnode_phys_t *dnp,
 	} else if (BP_GET_LOGICAL_BIRTH(bp) <= td->td_min_txg) {
 		return (0);
 	}
+
+	if (traverse_filtered_out(td, bp, zb, dnp))
+		return (0);
 
 	if (pd != NULL && !pd->pd_exited && prefetch_needed(pd, bp)) {
 		uint64_t size = BP_GET_LSIZE(bp);
@@ -624,7 +639,7 @@ traverse_prefetch_thread(void *arg)
 static int
 traverse_impl(spa_t *spa, dsl_dataset_t *ds, uint64_t objset, blkptr_t *rootbp,
     uint64_t txg_start, zbookmark_phys_t *resume, int flags,
-    blkptr_cb_t func, void *arg)
+    blkptr_cb_t func, traverse_filter_t *filter, void *arg)
 {
 	traverse_data_t *td;
 	prefetch_data_t *pd;
@@ -645,6 +660,8 @@ traverse_impl(spa_t *spa, dsl_dataset_t *ds, uint64_t objset, blkptr_t *rootbp,
 	td->td_resume = resume;
 	td->td_func = func;
 	td->td_arg = arg;
+	td->td_filter = filter;
+	td->td_filter_arg = arg;
 	td->td_pfd = pd;
 	td->td_flags = flags;
 	td->td_paused = B_FALSE;
@@ -730,7 +747,8 @@ traverse_dataset_resume(dsl_dataset_t *ds, uint64_t txg_start,
     int flags, blkptr_cb_t func, void *arg)
 {
 	return (traverse_impl(ds->ds_dir->dd_pool->dp_spa, ds, ds->ds_object,
-	    &dsl_dataset_phys(ds)->ds_bp, txg_start, resume, flags, func, arg));
+	    &dsl_dataset_phys(ds)->ds_bp, txg_start, resume, flags, func, NULL,
+	    arg));
 }
 
 int
@@ -746,15 +764,15 @@ traverse_dataset_destroyed(spa_t *spa, blkptr_t *blkptr,
     blkptr_cb_t func, void *arg)
 {
 	return (traverse_impl(spa, NULL, ZB_DESTROYED_OBJSET,
-	    blkptr, txg_start, resume, flags, func, arg));
+	    blkptr, txg_start, resume, flags, func, NULL, arg));
 }
 
 /*
  * NB: pool must not be changing on-disk (eg, from zdb or sync context).
  */
 int
-traverse_pool(spa_t *spa, uint64_t txg_start, int flags,
-    blkptr_cb_t func, void *arg)
+traverse_pool_filter(spa_t *spa, uint64_t txg_start, int flags,
+    blkptr_cb_t func, traverse_filter_t *filter, void *arg)
 {
 	int err;
 	dsl_pool_t *dp = spa_get_dsl(spa);
@@ -763,7 +781,7 @@ traverse_pool(spa_t *spa, uint64_t txg_start, int flags,
 
 	/* visit the MOS */
 	err = traverse_impl(spa, NULL, 0, spa_get_rootblkptr(spa),
-	    txg_start, NULL, flags, func, arg);
+	    txg_start, NULL, flags, func, filter, arg);
 	if (err != 0)
 		return (err);
 
@@ -793,7 +811,9 @@ traverse_pool(spa_t *spa, uint64_t txg_start, int flags,
 			}
 			if (dsl_dataset_phys(ds)->ds_prev_snap_txg > txg)
 				txg = dsl_dataset_phys(ds)->ds_prev_snap_txg;
-			err = traverse_dataset(ds, txg, flags, func, arg);
+			err = traverse_impl(spa, ds, ds->ds_object,
+			    &dsl_dataset_phys(ds)->ds_bp, txg, NULL, flags,
+			    func, filter, arg);
 			dsl_dataset_rele(ds, FTAG);
 			if (err != 0)
 				break;
@@ -802,6 +822,13 @@ traverse_pool(spa_t *spa, uint64_t txg_start, int flags,
 	if (err == ESRCH)
 		err = 0;
 	return (err);
+}
+
+int
+traverse_pool(spa_t *spa, uint64_t txg_start, int flags,
+    blkptr_cb_t func, void *arg)
+{
+	return (traverse_pool_filter(spa, txg_start, flags, func, NULL, arg));
 }
 
 EXPORT_SYMBOL(traverse_dataset);

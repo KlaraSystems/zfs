@@ -62,6 +62,9 @@ typedef int (blkptr_cb_t)(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 /* Special traverse error return value to indicate skipping of children */
 #define	TRAVERSE_VISIT_NO_CHILDREN	-1
 
+typedef boolean_t (traverse_filter_t)(spa_t *spa, const blkptr_t *bp,
+    const zbookmark_phys_t *zb, const struct dnode_phys *dnp, void *arg);
+
 int traverse_dataset(struct dsl_dataset *ds,
     uint64_t txg_start, int flags, blkptr_cb_t func, void *arg);
 int traverse_dataset_resume(struct dsl_dataset *ds, uint64_t txg_start,
@@ -71,6 +74,8 @@ int traverse_dataset_destroyed(spa_t *spa, blkptr_t *blkptr,
     blkptr_cb_t func, void *arg);
 int traverse_pool(spa_t *spa,
     uint64_t txg_start, int flags, blkptr_cb_t func, void *arg);
+int traverse_pool_filter(spa_t *spa, uint64_t txg_start, int flags,
+    blkptr_cb_t func, traverse_filter_t *filter, void *arg);
 
 /*
  * Note that this calculation cannot overflow with the current maximum indirect

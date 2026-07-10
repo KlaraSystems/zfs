@@ -210,14 +210,23 @@ run_zdb()
 	return "$zdb_rc"
 }
 
+read_checkpoint_txg()
+{
+	CKPT_TXG=$("$ZDB" -k -L -u "$POOL" 2>/dev/null |
+	    awk '$1 == "checkpoint_txg" { print $3; exit }')
+	is_uint "$CKPT_TXG" ||
+	    die "cannot read the txg of the checkpoint of pool '$POOL'"
+}
+
 do_full()
 {
 	take_checkpoint
+	read_checkpoint_txg
 	run_zdb || die "zdb verification of pool '$POOL' FAILED"
 	discard_our_checkpoint ||
 	    die "cannot discard the checkpoint of pool '$POOL'"
-	log "full scrub of the checkpointed state of pool '$POOL' completed (txg $TARGET_TXG)"
-	write_state "$TARGET_TXG"
+	log "full scrub of the checkpointed state of pool '$POOL' completed (txg $CKPT_TXG)"
+	write_state "$CKPT_TXG"
 }
 
 do_incremental()
@@ -228,20 +237,27 @@ do_incremental()
 		return 0
 	fi
 	while [ "$CURSOR" -lt "$TARGET_TXG" ]; do
-		window_top=$((CURSOR + STEP))
-		if [ "$window_top" -gt "$TARGET_TXG" ]; then
-			window_top=$TARGET_TXG
-		fi
 		take_checkpoint
+		window_top=$((CURSOR + STEP))
+		if [ "$window_top" -ge "$TARGET_TXG" ]; then
+			read_checkpoint_txg
+			window_top=$CKPT_TXG
+			max_opt=
+		else
+			max_opt="--scrub-max-txg=$window_top"
+		fi
 		log "scrubbing txg window ($CURSOR, $window_top] of pool '$POOL'"
-		run_zdb --scrub-min-txg="$((CURSOR + 1))" \
-		    --scrub-max-txg="$window_top" ||
+		run_zdb --scrub-min-txg="$((CURSOR + 1))" $max_opt ||
 		    die "zdb verification of pool '$POOL' FAILED in txg window ($CURSOR, $window_top]; cursor stays at $CURSOR"
 		discard_our_checkpoint ||
 		    die "cannot discard the checkpoint of pool '$POOL'"
 		CURSOR=$window_top
 		write_state "$CURSOR"
-		log "window done, cursor now $CURSOR of $TARGET_TXG"
+		if [ -z "$max_opt" ]; then
+			log "window done, cursor now $CURSOR, at the checkpoint"
+		else
+			log "window done, cursor now $CURSOR of $TARGET_TXG"
+		fi
 		if [ "$ONE_WINDOW" -eq 1 ]; then
 			log "single window mode, stopping"
 			break
