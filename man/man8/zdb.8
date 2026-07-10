@@ -27,6 +27,8 @@
 .Op Fl AbcdDFGhikLMNPsTvXYy
 .Op Fl e Oo Fl V Oc Oo Fl p Ar path Oc Ns …
 .Op Fl I Ar inflight-I/O-ops
+.Op Fl -scrub-min-txg Ns = Ns Ar txg
+.Op Fl -scrub-max-txg Ns = Ns Ar txg
 .Oo Fl o Ar var Ns = Ns Ar value Oc Ns …
 .Op Fl t Ar txg
 .Op Fl U Ar cache
@@ -478,6 +480,24 @@ The default value is 200.
 This option affects the performance of the
 .Fl c
 option.
+.It Fl -scrub-min-txg Ns = Ns Ar txg
+When using
+.Fl c ,
+only verify checksums of blocks whose physical birth transaction group is
+.Ar txg
+or later.
+Together with
+.Fl -scrub-max-txg ,
+this limits verification to the blocks born inside the given range, both
+bounds inclusive, so a pool can be verified in several bounded passes.
+If unspecified, there is no lower transaction group bound.
+.It Fl -scrub-max-txg Ns = Ns Ar txg
+When using
+.Fl c ,
+only verify checksums of blocks whose physical birth transaction group is
+.Ar txg
+or earlier.
+If unspecified, there is no upper transaction group bound.
 .It Fl K , -key Ns = Ns Ar key
 Decryption key needed to access an encrypted dataset.
 This will cause
