@@ -114,6 +114,8 @@ enum {
 	ARG_ALLOCATED = 256,
 	ARG_BLOCK_BIN_MODE,
 	ARG_BLOCK_CLASSES,
+	ARG_SCRUB_MIN_TXG,
+	ARG_SCRUB_MAX_TXG,
 };
 
 static const char cmdname[] = "zdb";
@@ -132,6 +134,10 @@ static int flagbits[256];
 
 
 static uint64_t max_inflight_bytes = 256 * 1024 * 1024; /* 256MB */
+static uint64_t scrub_min_txg = 0;
+static uint64_t scrub_max_txg = UINT64_MAX;
+static boolean_t scrub_min_txg_set = B_FALSE;
+static boolean_t scrub_max_txg_set = B_FALSE;
 static int leaked_objects = 0;
 static zfs_range_tree_t *mos_refd_objs;
 static spa_t *spa;
@@ -854,6 +860,12 @@ usage(void)
 	    "don't print label contents\n");
 	(void) fprintf(stderr, "        -t --txg=INTEGER             "
 	    "highest txg to use when searching for uberblocks\n");
+	(void) fprintf(stderr, "           --scrub-min-txg=INTEGER\n"
+	    "                                     with -c, only verify blocks "
+	    "born at or after this txg\n");
+	(void) fprintf(stderr, "           --scrub-max-txg=INTEGER\n"
+	    "                                     with -c, only verify blocks "
+	    "born at or before this txg\n");
 	(void) fprintf(stderr, "        -T --brt-stats               "
 	    "BRT statistics\n");
 	(void) fprintf(stderr, "        -u --uberblock               "
@@ -874,6 +886,28 @@ usage(void)
 	    "to make only that option verbose\n");
 	(void) fprintf(stderr, "Default is to dump everything non-verbosely\n");
 	zdb_exit(2);
+}
+
+static uint64_t
+zdb_parse_txg_arg(const char *option, const char *value)
+{
+	char *end = NULL;
+	uint64_t txg;
+
+	/*
+	 * Require a leading digit: strtoull() would otherwise skip
+	 * leading whitespace and accept a sign, letting " -1" through as
+	 * UINT64_MAX.  Base 0 still picks up the "0x" of a hex txg.
+	 */
+	errno = 0;
+	txg = strtoull(value, &end, 0);
+	if (!isdigit((unsigned char)value[0]) || errno != 0 || *end != '\0') {
+		(void) fprintf(stderr, "%s requires a numeric txg: %s\n",
+		    option, value);
+		usage();
+	}
+
+	return (txg);
 }
 
 static void
@@ -6735,6 +6769,14 @@ zdb_blkptr_done(zio_t *zio)
 	abd_free(zio->io_abd);
 }
 
+static boolean_t
+zdb_blkptr_should_scrub(const blkptr_t *bp)
+{
+	uint64_t phys_birth = BP_GET_PHYSICAL_BIRTH(bp);
+
+	return (phys_birth >= scrub_min_txg && phys_birth <= scrub_max_txg);
+}
+
 static int
 zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
     const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
@@ -6769,7 +6811,8 @@ zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	is_metadata = (BP_GET_LEVEL(bp) != 0 || DMU_OT_IS_METADATA(type));
 
 	if (!BP_IS_EMBEDDED(bp) &&
-	    (dump_opt['c'] > 1 || (dump_opt['c'] && is_metadata))) {
+	    (dump_opt['c'] > 1 || (dump_opt['c'] && is_metadata)) &&
+	    zdb_blkptr_should_scrub(bp)) {
 		size_t size = BP_GET_PSIZE(bp);
 		abd_t *abd = abd_alloc(size, B_FALSE);
 		int flags = ZIO_FLAG_CANFAIL | ZIO_FLAG_SCRUB | ZIO_FLAG_RAW;
@@ -7732,6 +7775,20 @@ dump_block_stats(spa_t *spa)
 	    dump_opt['c'] ? "checksums " : "",
 	    (dump_opt['c'] && !dump_opt['L']) ? "and verify " : "",
 	    !dump_opt['L'] ? "nothing leaked " : "");
+	if (dump_opt['c'] && scrub_min_txg_set && scrub_max_txg_set) {
+		(void) printf("Verifying checksums only for blocks with "
+		    "physical birth txgs in [%llu, %llu].\n\n",
+		    (u_longlong_t)scrub_min_txg,
+		    (u_longlong_t)scrub_max_txg);
+	} else if (dump_opt['c'] && scrub_min_txg_set) {
+		(void) printf("Verifying checksums only for blocks with "
+		    "physical birth txgs >= %llu.\n\n",
+		    (u_longlong_t)scrub_min_txg);
+	} else if (dump_opt['c'] && scrub_max_txg_set) {
+		(void) printf("Verifying checksums only for blocks with "
+		    "physical birth txgs <= %llu.\n\n",
+		    (u_longlong_t)scrub_max_txg);
+	}
 
 	/*
 	 * When leak detection is enabled we load all space maps as SM_ALLOC
@@ -9992,6 +10049,10 @@ main(int argc, char **argv)
 		    ARG_BLOCK_BIN_MODE},
 		{"class",		required_argument,	NULL,
 		    ARG_BLOCK_CLASSES},
+		{"scrub-min-txg",	required_argument,	NULL,
+		    ARG_SCRUB_MIN_TXG},
+		{"scrub-max-txg",	required_argument,	NULL,
+		    ARG_SCRUB_MAX_TXG},
 		{0, 0, 0, 0}
 	};
 
@@ -10081,7 +10142,7 @@ main(int argc, char **argv)
 			searchdirs[nsearch++] = optarg;
 			break;
 		case 't':
-			max_txg = strtoull(optarg, NULL, 0);
+			max_txg = zdb_parse_txg_arg("--txg", optarg);
 			if (max_txg < TXG_INITIAL) {
 				(void) fprintf(stderr, "incorrect txg "
 				    "specified: %s\n", optarg);
@@ -10160,6 +10221,16 @@ main(int argc, char **argv)
 			free(buf);
 			break;
 		}
+		case ARG_SCRUB_MIN_TXG:
+			scrub_min_txg = zdb_parse_txg_arg(
+			    "--scrub-min-txg", optarg);
+			scrub_min_txg_set = B_TRUE;
+			break;
+		case ARG_SCRUB_MAX_TXG:
+			scrub_max_txg = zdb_parse_txg_arg(
+			    "--scrub-max-txg", optarg);
+			scrub_max_txg_set = B_TRUE;
+			break;
 		default:
 			usage();
 			break;
@@ -10172,6 +10243,19 @@ main(int argc, char **argv)
 	}
 	if (dump_opt['H'] && !dump_opt['f']) {
 		(void) fprintf(stderr, "-H option requires use of -f\n");
+		usage();
+	}
+	if ((scrub_min_txg_set || scrub_max_txg_set) &&
+	    !dump_opt['c']) {
+		(void) fprintf(stderr, "--scrub-min-txg and "
+		    "--scrub-max-txg "
+		    "require use of -c\n");
+		usage();
+	}
+	if (scrub_min_txg_set && scrub_max_txg_set &&
+	    scrub_min_txg > scrub_max_txg) {
+		(void) fprintf(stderr, "--scrub-min-txg must be less than "
+		    "or equal to --scrub-max-txg\n");
 		usage();
 	}
 #if defined(_LP64)
