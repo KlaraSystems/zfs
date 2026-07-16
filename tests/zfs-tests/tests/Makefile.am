@@ -190,7 +190,6 @@ nobase_dist_datadir_zfs_tests_tests_DATA += \
 	functional/cli_root/zpool_events/zpool_events.kshlib \
 	functional/cli_root/zpool_expand/zpool_expand.cfg \
 	functional/cli_root/zpool_export/zpool_export.cfg \
-	functional/cli_root/zpool_export/zpool_export.kshlib \
 	functional/cli_root/zpool_get/vdev_get.cfg \
 	functional/cli_root/zpool_get/zpool_get.cfg \
 	functional/cli_root/zpool_get/zpool_get_parsable.cfg \

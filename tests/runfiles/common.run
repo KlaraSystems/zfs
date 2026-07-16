@@ -461,6 +461,8 @@ tests = ['zpool_events_clear', 'zpool_events_cliargs', 'zpool_events_follow',
 tags = ['functional', 'cli_root', 'zpool_events']
 
 [tests/functional/cli_root/zpool_export]
+pre =
+post =
 tests = ['zpool_export_001_pos', 'zpool_export_002_pos',
     'zpool_export_003_neg', 'zpool_export_004_pos',
     'zpool_export_parallel_pos', 'zpool_export_parallel_admin']
