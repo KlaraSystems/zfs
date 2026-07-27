@@ -63,7 +63,7 @@ log_assert "'everyone' is interpreted as a keyword even if a user " \
 log_onexit cleanup
 
 eval set -A dataset $DATASETS
-typeset perms="snapshot,reservation,compression,checksum,send,userprop"
+typeset perms="snapshot,reservation,compression,checksum,send,userprop,redact"
 
 log_note "Create a user called 'everyone'."
 if ! id everyone > /dev/null 2>&1; then

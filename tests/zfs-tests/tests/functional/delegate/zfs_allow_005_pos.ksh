@@ -51,7 +51,7 @@ log_assert "Verify option '-c' will be granted locally to the creator."
 log_onexit restore_root_datasets
 
 eval set -A dataset $DATASETS
-typeset perms="snapshot,reservation,compression,checksum,userprop"
+typeset perms="snapshot,reservation,compression,checksum,userprop,redact"
 
 log_must zfs allow -l everyone create,mount $ROOT_TESTFS
 log_must zfs allow -c $perms $ROOT_TESTFS
