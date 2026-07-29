@@ -927,10 +927,12 @@ txg_list_destroy(txg_list_t *tl)
 {
 	int t;
 
-	mutex_enter(&tl->tl_lock);
-	for (t = 0; t < TXG_SIZE; t++)
-		ASSERT(txg_list_empty_impl(tl, t));
-	mutex_exit(&tl->tl_lock);
+	if (!SPA_CANTWRITE(tl->tl_spa)) {
+		mutex_enter(&tl->tl_lock);
+		for (t = 0; t < TXG_SIZE; t++)
+			ASSERT(txg_list_empty_impl(tl, t));
+		mutex_exit(&tl->tl_lock);
+	}
 
 	mutex_destroy(&tl->tl_lock);
 }

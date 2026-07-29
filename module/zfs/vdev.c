@@ -1208,7 +1208,7 @@ vdev_free(vdev_t *vd)
 		vd->vdev_log_mg = NULL;
 	}
 
-	if (SPA_EXITING(spa))
+	if (SPA_CANTWRITE(spa))
 		vdev_clear_stats(vd);
 
 	ASSERT0(vd->vdev_stat.vs_space);
@@ -5504,6 +5504,8 @@ vdev_config_dirty(vdev_t *vd)
 	if (SPA_CANTWRITE(spa))
 		return;
 
+	if (SPA_LOCKOUT(spa))
+		return;
 	ASSERT(spa_writeable(spa));
 
 	/*
