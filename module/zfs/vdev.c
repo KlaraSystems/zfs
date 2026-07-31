@@ -1208,12 +1208,13 @@ vdev_free(vdev_t *vd)
 		vd->vdev_log_mg = NULL;
 	}
 
-	if (SPA_CANTWRITE(spa))
+	if (SPA_CANTWRITE(spa)) {
 		vdev_clear_stats(vd);
-
-	ASSERT0(vd->vdev_stat.vs_space);
-	ASSERT0(vd->vdev_stat.vs_dspace);
-	ASSERT0(vd->vdev_stat.vs_alloc);
+	} else {
+		ASSERT0(vd->vdev_stat.vs_space);
+		ASSERT0(vd->vdev_stat.vs_dspace);
+		ASSERT0(vd->vdev_stat.vs_alloc);
+	}
 
 	/*
 	 * Remove this vdev from its parent's child list.
