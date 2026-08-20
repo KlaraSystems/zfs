@@ -476,7 +476,7 @@ get_usage(zpool_help_t idx)
 		return (gettext("\tattach [-fsw] [-o property=value] "
 		    "<pool> <vdev> <new-device>\n"));
 	case HELP_CLEAR:
-		return (gettext("\tclear [--power] <pool> [device]\n"));
+		return (gettext("\tclear [--power] [-R] [-F] [-n] [-X] <pool> [device]\n"));
 	case HELP_CREATE:
 		return (gettext("\tcreate [-fnd] [-o property=value] ... \n"
 		    "\t    [-O file-system-property=value] ... \n"
@@ -512,8 +512,7 @@ get_usage(zpool_help_t idx)
 		    "[--json-int, --json-pool-key-guid]] ...\n"
 		    "\t    [-T d|u] [pool] [interval [count]]\n"));
 	case HELP_PREFETCH:
-		return (gettext("\tprefetch -t <type> [<type opts>] <pool>\n"
-		    "\t    -t ddt <pool>\n"));
+	        return (gettext("\tprefetch [-t <type>] <pool>\n"));
 	case HELP_LOCKOUT:
 		return (gettext("\tlockout <pool>\n"));
 	case HELP_OFFLINE:

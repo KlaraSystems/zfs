@@ -1624,7 +1624,8 @@ dsl_pool_config_held_writer(dsl_pool_t *dp)
 }
 
 
-void dsl_pool_lockout(dsl_pool_t *dp, uint64_t lockout) {
+void
+dsl_pool_lockout(dsl_pool_t *dp, uint64_t lockout) {
 	/*
 	 * set lockout on the pool as a whole (applied to new objsets)
 	 */

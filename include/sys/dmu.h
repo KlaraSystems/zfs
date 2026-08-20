@@ -305,6 +305,10 @@ typedef enum {
 	 */
 	DMU_TX_SUSPEND		= (1 << 2),
 
+	/*
+	 * Ignore a lockout (forced read-only); this should be used very
+	 * sparingly.
+	 */
 	DMU_TX_NOLOCKOUT	= (1 << 3),
 } dmu_tx_flag_t;
 

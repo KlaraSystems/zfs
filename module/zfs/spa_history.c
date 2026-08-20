@@ -287,8 +287,10 @@ spa_history_log_sync(void *arg, dmu_tx_t *tx)
 	mutex_enter(&spa->spa_history_lock);
 	if (!spa->spa_history) {
 		ret = spa_history_create_obj(spa, tx);
-		if (ret && SPA_EXITING(spa))
+		if (ret && SPA_EXITING(spa)) {
+			mutex_exit(&spa->spa_history_lock);
 			goto spa_exiting;
+		}
 		VERIFY0(ret);
 	}
 	mutex_exit(&spa->spa_history_lock);

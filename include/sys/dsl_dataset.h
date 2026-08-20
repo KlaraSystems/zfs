@@ -24,7 +24,6 @@
  * Copyright (c) 2011, 2018 by Delphix. All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
- * Copyright (c) 2024, Klara, Inc.
  */
 
 #ifndef	_SYS_DSL_DATASET_H

@@ -7870,10 +7870,6 @@ zfs_ioc_pool_condense(const char *pool, nvlist_t *innvl, nvlist_t *onvl)
 }
 
 /*
- * XXX _pool_lockout is just a hackjob to give me something to hook on to.
- *     this comment is here to remind me of this when later -- robn, 2024-06-28
- */
-/*
  * inputs:
  * poolname             name of the pool
  */

@@ -1406,18 +1406,6 @@ dmu_tx_wait_flags(dmu_tx_t *tx, uint64_t twflags)
 	ASSERT0(tx->tx_txg);
 	ASSERT(!dsl_pool_config_held(tx->tx_pool));
 
-#if 0
-	/*
-	 * Break on suspend according to whether or not DMU_TX_SUSPEND was
-	 * supplied to the previous dmu_tx_assign() call. For clients, this
-	 * ensures that after dmu_tx_assign() fails, the followup dmu_tx_wait()
-	 * gets the same behaviour wrt suspend. See also the comments in
-	 * dmu_tx_assign().
-	 */
-	txg_wait_flag_t flags =
-	    (tx->tx_break_on_suspend ? TXG_WAIT_SUSPEND : TXG_WAIT_NONE);
-#endif
-
 	before = gethrtime();
 
 	if (tx->tx_wait_dirty) {
