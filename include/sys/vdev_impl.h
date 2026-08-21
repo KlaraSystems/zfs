@@ -431,6 +431,7 @@ struct vdev {
 	vdev_queue_t	vdev_queue;	/* I/O deadline schedule queue	*/
 	spa_aux_vdev_t	*vdev_aux;	/* for l2cache and spares vdevs	*/
 	zio_t		*vdev_probe_zio; /* root of current probe	*/
+	uint_t		vdev_probe_fails; /* protected by vdev_probe_lock */
 	vdev_aux_t	vdev_label_aux;	/* on-disk aux state		*/
 	uint64_t	vdev_leaf_zap;
 	hrtime_t	vdev_mmp_pending; /* 0 if write finished	*/

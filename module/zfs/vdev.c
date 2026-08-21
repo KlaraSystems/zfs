@@ -170,6 +170,14 @@ uint_t zfs_vdev_direct_write_verify = 1;
 uint_t zfs_vdev_direct_write_verify = 0;
 #endif
 
+/*
+ * Number of probes that are allowed to fail before faulting the vdev.
+ * By default the first failed probe (which is issued when a normal ZIO fails)
+ * will fault the device. Note that probes that are issued when a device is
+ * first open ignore this, and always fault the device if the first probe fails.
+ */
+uint_t zfs_vdev_allowed_failed_probes = 1;
+
 void
 vdev_dbgmsg(vdev_t *vd, const char *fmt, ...)
 {
@@ -1752,10 +1760,13 @@ vdev_probe_done(zio_t *zio)
 		vdev_dbgmsg(vd, "probe done, cant_read=%u cant_write=%u",
 		    vd->vdev_cant_read, vd->vdev_cant_write);
 
+		mutex_enter(&vd->vdev_probe_lock);
 		if (vdev_readable(vd) &&
 		    (vdev_writeable(vd) || !spa_writeable(spa))) {
 			zio->io_error = 0;
-		} else {
+			vd->vdev_probe_fails = 0;
+		} else if (vd->vdev_probe_fails >=
+		    zfs_vdev_allowed_failed_probes) {
 			ASSERT(zio->io_error != 0);
 			vdev_dbgmsg(vd, "failed probe");
 			(void) zfs_ereport_post(FM_EREPORT_ZFS_PROBE_FAILURE,
@@ -1772,9 +1783,10 @@ vdev_probe_done(zio_t *zio)
 				vd->vdev_fault_wanted = B_TRUE;
 				spa_async_request(spa, SPA_ASYNC_FAULT_VDEV);
 			}
+		} else {
+			vd->vdev_probe_fails++;
 		}
 
-		mutex_enter(&vd->vdev_probe_lock);
 		ASSERT(vd->vdev_probe_zio == zio);
 		vd->vdev_probe_zio = NULL;
 		mutex_exit(&vd->vdev_probe_lock);
@@ -1816,6 +1828,13 @@ vdev_probe(vdev_t *vd, zio_t *zio)
 	 * this vdev will become parents of the probe io.
 	 */
 	mutex_enter(&vd->vdev_probe_lock);
+	/*
+	 * If this probe is being requested to verify the state of a new device
+	 * or check on the state of one being removed, we want to take the
+	 * result of the first probe.
+	 */
+	if (zio == NULL)
+		vd->vdev_probe_fails = UINT_MAX;
 
 	if ((pio = vd->vdev_probe_zio) == NULL) {
 		vps = kmem_zalloc(sizeof (*vps), KM_SLEEP);
@@ -6697,6 +6716,9 @@ ZFS_MODULE_PARAM(zfs, zfs_, dio_write_verify_events_per_second, UINT, ZMOD_RW,
 ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, direct_write_verify, UINT, ZMOD_RW,
 	"Direct I/O writes will perform for checksum verification before "
 	"commiting write");
+
+ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, allowed_failed_probes, UINT, ZMOD_RW,
+	"Number of probes allowed to fail before faulting a device");
 
 ZFS_MODULE_PARAM(zfs, zfs_, checksum_events_per_second, UINT, ZMOD_RW,
 	"Rate limit checksum events to this many checksum errors per second "
