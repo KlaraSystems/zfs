@@ -50,6 +50,7 @@ extern const metaslab_ops_t zfs_metaslab_ops;
 int metaslab_init(metaslab_group_t *, uint64_t, uint64_t, uint64_t,
     metaslab_t **);
 void metaslab_fini(metaslab_t *);
+void metaslab_fini_flush_data(metaslab_t *msp);
 
 void metaslab_set_unflushed_dirty(metaslab_t *, boolean_t);
 void metaslab_set_unflushed_txg(metaslab_t *, uint64_t, dmu_tx_t *);
@@ -130,6 +131,7 @@ uint64_t metaslab_group_get_space(metaslab_group_t *);
 void metaslab_group_histogram_verify(metaslab_group_t *);
 uint64_t metaslab_group_fragmentation(metaslab_group_t *);
 void metaslab_group_histogram_remove(metaslab_group_t *, metaslab_t *);
+void metaslab_group_histogram_add(metaslab_group_t *, metaslab_t *);
 void metaslab_group_alloc_decrement(spa_t *, uint64_t, const void *, int, int,
     boolean_t);
 void metaslab_group_alloc_verify(spa_t *, const blkptr_t *, const void *, int);
