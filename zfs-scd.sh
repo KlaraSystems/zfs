@@ -27,10 +27,10 @@ runScan() {
 
     if [[ -z $1 ]]; then
         echo "$(date): BEGIN scan for pool $POOL"
-        $MYDIR/libs/zdb --allocation-scanner $POOL
+        $MYDIR/libs/zdb --allocation-scanner -AAA $POOL
     else
         echo "$(date): BEGIN scan for pool $POOL with scope = $1"
-        $MYDIR/libs/zdb --allocation-scanner=$1 $POOL
+        $MYDIR/libs/zdb --allocation-scanner=$1 -AAA $POOL
     fi
     echo "$(date): END scan for pool $POOL"
 }
