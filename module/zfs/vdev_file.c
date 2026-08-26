@@ -103,6 +103,7 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	zfs_file_t *fp;
 	zfs_file_attr_t zfa;
 	int error;
+	spa_mode_t smode = spa_mode(vd->vdev_spa);
 
 	/*
 	 * Rotational optimizations only make sense on block devices.
@@ -139,7 +140,6 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 		vf = vd->vdev_tsd;
 		goto skip_open;
 	}
-
 	vf = vd->vdev_tsd = kmem_zalloc(sizeof (vdev_file_t), KM_SLEEP);
 
 	/*
@@ -152,13 +152,14 @@ vdev_file_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 	ASSERT3S(vd->vdev_path[0], ==, '/');
 
 	error = zfs_file_open(vd->vdev_path,
-	    vdev_file_open_mode(spa_mode(vd->vdev_spa)), 0, &fp);
+	    vdev_file_open_mode(smode), 0, &fp);
 	if (error) {
 		vd->vdev_stat.vs_aux = VDEV_AUX_OPEN_FAILED;
 		return (error);
 	}
 
 	vf->vf_file = fp;
+	vf->vf_mode = smode;
 
 #ifdef _KERNEL
 	/*
@@ -193,7 +194,8 @@ vdev_file_close(vdev_t *vd)
 {
 	vdev_file_t *vf = vd->vdev_tsd;
 
-	if (vd->vdev_reopening || vf == NULL)
+	spa_mode_t smode = spa_mode(vd->vdev_spa);
+	if (vf == NULL || (vd->vdev_reopening && vf->vf_mode == smode))
 		return;
 
 	if (vf->vf_file != NULL) {
