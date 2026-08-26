@@ -3105,7 +3105,14 @@ zfs_ioc_pool_set_props(zfs_cmd_t *zc)
 		nvlist_free(props);
 		return (error);
 	}
-
+	if (!spa_writeable(spa) &&
+	    !(pair != NULL && strcmp(nvpair_name(pair),
+	    zpool_prop_to_name(ZPOOL_PROP_READONLY)) == 0 &&
+	    nvlist_next_nvpair(props, pair) == NULL)) {
+		spa_close(spa, FTAG);
+		nvlist_free(props);
+		return (SET_ERROR(EROFS));
+	}
 	error = spa_prop_set(spa, props);
 
 	nvlist_free(props);
@@ -6183,6 +6190,46 @@ zfs_ioc_pool_reopen(const char *pool, nvlist_t *innvl, nvlist_t *outnvl)
 }
 
 /*
+ * innvl is not used.
+ *
+ * outnvl is not used.
+ */
+static const zfs_ioc_key_t zfs_keys_pool_make_writeable[] = {
+	/* no nvl keys */
+};
+
+static int
+zfs_ioc_pool_make_writeable(const char *pool, nvlist_t *innvl, nvlist_t *outnvl)
+{
+	(void) innvl, (void) outnvl;
+	spa_t *spa;
+	int error;
+	mutex_enter(&spa_namespace_lock);
+	spa = spa_lookup(pool);
+	if (spa == NULL) {
+		mutex_exit(&spa_namespace_lock);
+		return (SET_ERROR(EIO));
+	}
+
+	if (spa_writeable(spa)) {
+		mutex_exit(&spa_namespace_lock);
+		return (SET_ERROR(EALREADY));
+	}
+
+	// If multihost is enabled, check for remote activity.
+	if (spa_multihost(spa) &&
+	    spa_mmp_remote_host_activity(spa)) {
+		mutex_exit(&spa_namespace_lock);
+		return (SET_ERROR(EREMOTEIO));
+	}
+
+	spa->spa_load_thread = curthread;
+	mutex_exit(&spa_namespace_lock);
+	error = spa_make_writeable(spa);
+	return (error);
+}
+
+/*
  * inputs:
  * zc_name	name of filesystem
  *
@@ -7574,6 +7621,12 @@ zfs_ioctl_init(void)
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE,
 	    zfs_keys_ddt_prune, ARRAY_SIZE(zfs_keys_ddt_prune));
 
+	zfs_ioctl_register("zpool_make_writeable", ZFS_IOC_POOL_MAKE_WRITEABLE,
+	    zfs_ioc_pool_make_writeable, zfs_secpolicy_config, POOL_NAME,
+	    POOL_CHECK_SUSPENDED, B_TRUE, B_TRUE,
+	    zfs_keys_pool_make_writeable,
+	    ARRAY_SIZE(zfs_keys_pool_make_writeable));
+
 	/* IOCTLS that use the legacy function signature */
 
 	zfs_ioctl_register_legacy(ZFS_IOC_POOL_FREEZE, zfs_ioc_pool_freeze,
@@ -7599,8 +7652,9 @@ zfs_ioctl_init(void)
 	    zfs_ioc_vdev_setpath);
 	zfs_ioctl_register_pool_modify(ZFS_IOC_VDEV_SETFRU,
 	    zfs_ioc_vdev_setfru);
-	zfs_ioctl_register_pool_modify(ZFS_IOC_POOL_SET_PROPS,
-	    zfs_ioc_pool_set_props);
+	zfs_ioctl_register_pool(ZFS_IOC_POOL_SET_PROPS,
+	    zfs_ioc_pool_set_props, zfs_secpolicy_config, B_TRUE,
+	    POOL_CHECK_SUSPENDED);
 	zfs_ioctl_register_pool_modify(ZFS_IOC_VDEV_SPLIT,
 	    zfs_ioc_vdev_split);
 	zfs_ioctl_register_pool_modify(ZFS_IOC_POOL_REGUID,

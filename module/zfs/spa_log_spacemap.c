@@ -1128,7 +1128,7 @@ spa_ld_log_sm_cb(space_map_entry_t *sme, void *arg)
 	return (0);
 }
 
-static int
+int
 spa_ld_log_sm_data(spa_t *spa)
 {
 	spa_log_sm_t *sls, *psls;

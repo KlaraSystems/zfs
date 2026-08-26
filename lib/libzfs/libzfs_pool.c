@@ -857,12 +857,22 @@ zpool_valid_proplist(libzfs_handle_t *hdl, const char *poolname,
 			}
 			break;
 		case ZPOOL_PROP_READONLY:
-			if (!flags.import) {
+			if (flags.create) {
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "property '%s' can only be set at "
-				    "import time"), propname);
+				    "property '%s' cannot be set at "
+				    "create time"), propname);
 				(void) zfs_error(hdl, EZFS_BADPROP, errbuf);
 				goto error;
+			}
+			/*
+			 * If we're importing, we can set it 'on' or 'off'.
+			 * Once it's imported, only off->on is supported
+			 * for now.
+			 */
+			if (!flags.import && intval == 1) {
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "property '%s' can only be set to "
+				    "'off'"), propname);
 			}
 			break;
 		case ZPOOL_PROP_MULTIHOST:
@@ -889,6 +899,36 @@ error:
 	return (NULL);
 }
 
+static int
+clear_temp_readonly(zfs_handle_t *zhp, void *arg)
+{
+	(void) arg;
+	int error = zfs_iter_filesystems_v2(zhp, 0, clear_temp_readonly, arg);
+	if (error != 0)
+		return (error);
+
+	const char *source;
+	boolean_t readonly_orig = getprop_uint64(zhp, ZFS_PROP_READONLY,
+	    &source);
+	if (readonly_orig)
+		return (0);
+	libzfs_handle_t *hdl = zhp->zfs_hdl;
+	struct mnttab entry;
+
+	if (libzfs_mnttab_find(hdl, zhp->zfs_name, &entry) != 0)
+		return (0);
+	if (!hasmntopt(&entry, MNTOPT_RO))
+		return (0);
+	char mntopts[MNT_LINE_MAX];
+	(void) strlcpy(mntopts, entry.mnt_mntopts, sizeof (mntopts));
+	char *ro = strstr(mntopts, MNTOPT_RO);
+	memcpy(ro, MNTOPT_RW, strlen(MNTOPT_RW));
+	size_t len = strlcat(mntopts, ",remount", sizeof (mntopts));
+	if (len > sizeof (mntopts))
+		return (E2BIG);
+	return (zfs_mount(zhp, mntopts, 0) == 0 ? 0 : errno);
+}
+
 /*
  * Set zpool property : propname=propval.
  */
@@ -902,10 +942,12 @@ zpool_set_prop(zpool_handle_t *zhp, const char *propname, const char *propval)
 	nvlist_t *realprops;
 	uint64_t version;
 	prop_flags_t flags = { 0 };
+	char *pool_name = zhp->zpool_name;
+	libzfs_handle_t *hdl = zhp->zpool_hdl;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "cannot set property for '%s'"),
-	    zhp->zpool_name);
+	    pool_name);
 
 	if (nvlist_alloc(&nvl, NV_UNIQUE_NAME, 0) != 0)
 		return (no_memory(zhp->zpool_hdl));
@@ -917,7 +959,7 @@ zpool_set_prop(zpool_handle_t *zhp, const char *propname, const char *propval)
 
 	version = zpool_get_prop_int(zhp, ZPOOL_PROP_VERSION, NULL);
 	if ((realprops = zpool_valid_proplist(zhp->zpool_hdl,
-	    zhp->zpool_name, nvl, version, flags, errbuf)) == NULL) {
+	    pool_name, nvl, version, flags, errbuf)) == NULL) {
 		nvlist_free(nvl);
 		return (-1);
 	}
@@ -928,19 +970,31 @@ zpool_set_prop(zpool_handle_t *zhp, const char *propname, const char *propval)
 	/*
 	 * Execute the corresponding ioctl() to set this property.
 	 */
-	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
+	(void) strlcpy(zc.zc_name, pool_name, sizeof (zc.zc_name));
 
-	zcmd_write_src_nvlist(zhp->zpool_hdl, &zc, nvl);
+	zcmd_write_src_nvlist(hdl, &zc, nvl);
 
-	ret = zfs_ioctl(zhp->zpool_hdl, ZFS_IOC_POOL_SET_PROPS, &zc);
+	ret = zfs_ioctl(hdl, ZFS_IOC_POOL_SET_PROPS, &zc);
 
 	zcmd_free_nvlists(&zc);
 	nvlist_free(nvl);
 
-	if (ret)
-		(void) zpool_standard_error(zhp->zpool_hdl, errno, errbuf);
-	else
+	if (ret) {
+		(void) zpool_standard_error(hdl, errno, errbuf);
+	} else {
 		(void) zpool_props_refresh(zhp);
+		if (zpool_name_to_prop(propname) == ZPOOL_PROP_READONLY) {
+			zfs_handle_t *zfs_hp = zfs_open(hdl, pool_name,
+			    ZFS_TYPE_FILESYSTEM);
+			ret = clear_temp_readonly(zfs_hp, NULL);
+			if (ret) {
+				return (zpool_standard_error_fmt(hdl, ret,
+				    dgettext(TEXT_DOMAIN, "made '%s' "
+				    "writeable, but not all datasets "
+				    "remounted"), pool_name));
+			}
+		}
+	}
 
 	return (ret);
 }

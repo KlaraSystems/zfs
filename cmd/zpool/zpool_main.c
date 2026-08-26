@@ -4312,6 +4312,7 @@ zpool_do_import(int argc, char **argv)
 	boolean_t xtreme_rewind = B_FALSE;
 	boolean_t do_scan = B_FALSE;
 	boolean_t pool_exists = B_FALSE;
+	boolean_t make_writeable = B_FALSE;
 	uint64_t txg = -1ULL;
 	char *cachefile = NULL;
 	importargs_t idata = { 0 };
@@ -4420,6 +4421,11 @@ zpool_do_import(int argc, char **argv)
 
 	argc -= optind;
 	argv += optind;
+
+	if (make_writeable && argc != 1) {
+		(void) fprintf(stderr, gettext("-W requires one pool\n"));
+		usage(B_FALSE);
+	}
 
 	if (cachefile && nsearch != 0) {
 		(void) fprintf(stderr, gettext("-c is incompatible with -d\n"));

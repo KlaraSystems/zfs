@@ -74,6 +74,7 @@ typedef void zfs_bdev_handle_t;
 typedef struct vdev_disk {
 	zfs_bdev_handle_t		*vd_bdh;
 	krwlock_t			vd_lock;
+	spa_mode_t			vd_mode;
 } vdev_disk_t;
 
 /*
@@ -335,13 +336,13 @@ vdev_disk_open(vdev_t *v, uint64_t *psize, uint64_t *max_psize,
 				if (v->vdev_psize == bdev_capacity(bdev))
 					reread_part = B_TRUE;
 			}
-
-			vdev_blkdev_put(bdh, smode, zfs_vdev_holder);
+			vdev_blkdev_put(bdh, vd->vd_mode, zfs_vdev_holder);
 		}
 
 		if (reread_part) {
 			bdh = vdev_blkdev_get_by_path(disk_name, smode,
 			    zfs_vdev_holder);
+			vd->vd_mode = smode;
 			if (!BDH_IS_ERR(bdh)) {
 				int error =
 				    vdev_bdev_reread_part(BDH_BDEV(bdh));
@@ -392,6 +393,7 @@ vdev_disk_open(vdev_t *v, uint64_t *psize, uint64_t *max_psize,
 	while (BDH_IS_ERR(bdh) && ((gethrtime() - start) < timeout)) {
 		bdh = vdev_blkdev_get_by_path(v->vdev_path, smode,
 		    zfs_vdev_holder);
+		vd->vd_mode = smode;
 		if (unlikely(BDH_PTR_ERR(bdh) == -ENOENT)) {
 			/*
 			 * There is no point of waiting since device is removed
@@ -472,7 +474,7 @@ vdev_disk_close(vdev_t *v)
 		return;
 
 	if (vd->vd_bdh != NULL)
-		vdev_blkdev_put(vd->vd_bdh, spa_mode(v->vdev_spa),
+		vdev_blkdev_put(vd->vd_bdh, vd->vd_mode,
 		    zfs_vdev_holder);
 
 	rw_destroy(&vd->vd_lock);
