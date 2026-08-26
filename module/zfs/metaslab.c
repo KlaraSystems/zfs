@@ -1059,7 +1059,7 @@ metaslab_group_histogram_verify(metaslab_group_t *mg)
 	kmem_free(mg_hist, sizeof (uint64_t) * ZFS_RANGE_TREE_HISTOGRAM_SIZE);
 }
 
-static void
+void
 metaslab_group_histogram_add(metaslab_group_t *mg, metaslab_t *msp)
 {
 	metaslab_class_t *mc = mg->mg_class;
@@ -2808,7 +2808,7 @@ metaslab_init(metaslab_group_t *mg, uint64_t id, uint64_t object,
 	return (0);
 }
 
-static void
+void
 metaslab_fini_flush_data(metaslab_t *msp)
 {
 	spa_t *spa = msp->ms_group->mg_vd->vdev_spa;

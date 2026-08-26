@@ -4312,6 +4312,7 @@ zpool_do_import(int argc, char **argv)
 	boolean_t xtreme_rewind = B_FALSE;
 	boolean_t do_scan = B_FALSE;
 	boolean_t pool_exists = B_FALSE;
+	boolean_t make_writeable = B_FALSE;
 	uint64_t txg = -1ULL;
 	char *cachefile = NULL;
 	importargs_t idata = { 0 };
@@ -4323,7 +4324,7 @@ zpool_do_import(int argc, char **argv)
 	};
 
 	/* check options */
-	while ((c = getopt_long(argc, argv, ":aCc:d:DEfFlmnNo:R:stT:VX",
+	while ((c = getopt_long(argc, argv, ":aCc:d:DEfFlmnNo:R:stT:VWX",
 	    long_options, NULL)) != -1) {
 		switch (c) {
 		case 'a':
@@ -4403,6 +4404,9 @@ zpool_do_import(int argc, char **argv)
 		case 'X':
 			xtreme_rewind = B_TRUE;
 			break;
+		case 'W':
+			make_writeable = B_TRUE;
+			break;
 		case CHECKPOINT_OPT:
 			flags |= ZFS_IMPORT_CHECKPOINT;
 			break;
@@ -4420,6 +4424,27 @@ zpool_do_import(int argc, char **argv)
 
 	argc -= optind;
 	argv += optind;
+
+	if (make_writeable && argc != 1) {
+		(void) fprintf(stderr, gettext("-W requires one pool\n"));
+		usage(B_FALSE);
+	}
+
+	if (make_writeable && (cachefile || nsearch != 0 || do_scan ||
+	    flags != ZFS_IMPORT_NORMAL || xtreme_rewind || do_rewind ||
+	    do_all || do_destroyed || dryrun)) {
+		(void) fprintf(stderr, gettext("-W is incompatible with all "
+		    "other flags\n"));
+		usage(B_FALSE);
+	}
+
+	if (make_writeable) {
+		zpool_handle_t *zhp = zpool_open(g_zfs, argv[0]);
+		if (zhp == NULL) {
+			return (1);
+		}
+		return (zpool_make_writeable(zhp) == 0);
+	}
 
 	if (cachefile && nsearch != 0) {
 		(void) fprintf(stderr, gettext("-c is incompatible with -d\n"));

@@ -5522,6 +5522,115 @@ spa_ld_mos_with_trusted_config(spa_t *spa, spa_import_type_t type,
 	return (0);
 }
 
+static void
+spa_load_writeable(spa_t *spa, boolean_t checkpoint_rewind,
+    boolean_t update_config_cache)
+{
+	uint64_t config_cache_txg = spa->spa_config_txg;
+	spa_import_progress_set_notes(spa, "Starting import");
+	ASSERT(spa->spa_load_state != SPA_LOAD_TRYIMPORT);
+
+	/*
+	 * Before we do any zio_write's, complete the raidz expansion
+	 * scratch space copying, if necessary.
+	 */
+	if (RRSS_GET_STATE(&spa->spa_uberblock) == RRSS_SCRATCH_VALID)
+		vdev_raidz_reflow_copy_scratch(spa);
+
+	/*
+	 * In case of a checkpoint rewind, log the original txg
+	 * of the checkpointed uberblock.
+	 */
+	if (checkpoint_rewind) {
+		spa_history_log_internal(spa, "checkpoint rewind",
+		    NULL, "rewound state to txg=%llu",
+		    (u_longlong_t)spa->spa_uberblock.ub_checkpoint_txg);
+	}
+
+	spa_import_progress_set_notes(spa, "Claiming ZIL blocks");
+	/*
+	 * Traverse the ZIL and claim all blocks.
+	 */
+	spa_ld_claim_log_blocks(spa);
+
+	/*
+	 * Kick-off the syncing thread.
+	 */
+	spa->spa_sync_on = B_TRUE;
+	txg_sync_start(spa->spa_dsl_pool);
+	mmp_thread_start(spa);
+
+	/*
+	 * Wait for all claims to sync.  We sync up to the highest
+	 * claimed log block birth time so that claimed log blocks
+	 * don't appear to be from the future.  spa_claim_max_txg
+	 * will have been set for us by ZIL traversal operations
+	 * performed above.
+	 */
+	spa_import_progress_set_notes(spa, "Syncing ZIL claims");
+	txg_wait_synced(spa->spa_dsl_pool, spa->spa_claim_max_txg);
+
+	/*
+	 * Check if we need to request an update of the config. On the
+	 * next sync, we would update the config stored in vdev labels
+	 * and the cachefile (by default /etc/zfs/zpool.cache).
+	 */
+	spa_import_progress_set_notes(spa, "Updating configs");
+	spa_ld_check_for_config_update(spa, config_cache_txg,
+	    update_config_cache);
+
+	/*
+	 * Check if a rebuild was in progress and if so resume it.
+	 * Then check all DTLs to see if anything needs resilvering.
+	 * The resilver will be deferred if a rebuild was started.
+	 */
+	spa_import_progress_set_notes(spa, "Starting resilvers");
+	if (vdev_rebuild_active(spa->spa_root_vdev)) {
+		vdev_rebuild_restart(spa);
+	} else if (!dsl_scan_resilvering(spa->spa_dsl_pool) &&
+	    vdev_resilver_needed(spa->spa_root_vdev, NULL, NULL)) {
+		spa_async_request(spa, SPA_ASYNC_RESILVER);
+	}
+
+	/*
+	 * Log the fact that we booted up (so that we can detect if
+	 * we rebooted in the middle of an operation).
+	 */
+	spa_history_log_version(spa, "open", NULL);
+
+	spa_import_progress_set_notes(spa, "Restarting device removals");
+	spa_restart_removal(spa);
+	spa_spawn_aux_threads(spa);
+
+	/*
+	 * Delete any inconsistent datasets.
+	 *
+	 * Note:
+	 * Since we may be issuing deletes for clones here,
+	 * we make sure to do so after we've spawned all the
+	 * auxiliary threads above (from which the livelist
+	 * deletion zthr is part of).
+	 */
+	spa_import_progress_set_notes(spa, "Cleaning up inconsistent objsets");
+	(void) dmu_objset_find(spa_name(spa), dsl_destroy_inconsistent, NULL,
+	    DS_FIND_CHILDREN);
+
+	/*
+	 * Clean up any stale temporary dataset userrefs.
+	 */
+	spa_import_progress_set_notes(spa, "Cleaning up temporary userrefs");
+	dsl_pool_clean_tmp_userrefs(spa->spa_dsl_pool);
+
+	spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
+	spa_import_progress_set_notes(spa, "Restarting initialize");
+	vdev_initialize_restart(spa->spa_root_vdev);
+	spa_import_progress_set_notes(spa, "Restarting TRIM");
+	vdev_trim_restart(spa->spa_root_vdev);
+	vdev_autotrim_restart(spa);
+	spa_config_exit(spa, SCL_CONFIG, FTAG);
+	spa_import_progress_set_notes(spa, "Finished importing");
+}
+
 /*
  * Load an existing storage pool, using the config provided. This config
  * describes which vdevs are part of the pool and is later validated against
@@ -5710,112 +5819,7 @@ spa_load_impl(spa_t *spa, spa_import_type_t type, const char **ereport)
 	spa_import_progress_set_notes(spa, "Starting import");
 	if (spa_writeable(spa) && (spa->spa_load_state == SPA_LOAD_RECOVER ||
 	    spa->spa_load_max_txg == UINT64_MAX)) {
-		uint64_t config_cache_txg = spa->spa_config_txg;
-
-		ASSERT(spa->spa_load_state != SPA_LOAD_TRYIMPORT);
-
-		/*
-		 * Before we do any zio_write's, complete the raidz expansion
-		 * scratch space copying, if necessary.
-		 */
-		if (RRSS_GET_STATE(&spa->spa_uberblock) == RRSS_SCRATCH_VALID)
-			vdev_raidz_reflow_copy_scratch(spa);
-
-		/*
-		 * In case of a checkpoint rewind, log the original txg
-		 * of the checkpointed uberblock.
-		 */
-		if (checkpoint_rewind) {
-			spa_history_log_internal(spa, "checkpoint rewind",
-			    NULL, "rewound state to txg=%llu",
-			    (u_longlong_t)spa->spa_uberblock.ub_checkpoint_txg);
-		}
-
-		spa_import_progress_set_notes(spa, "Claiming ZIL blocks");
-		/*
-		 * Traverse the ZIL and claim all blocks.
-		 */
-		spa_ld_claim_log_blocks(spa);
-
-		/*
-		 * Kick-off the syncing thread.
-		 */
-		spa->spa_sync_on = B_TRUE;
-		txg_sync_start(spa->spa_dsl_pool);
-		mmp_thread_start(spa);
-
-		/*
-		 * Wait for all claims to sync.  We sync up to the highest
-		 * claimed log block birth time so that claimed log blocks
-		 * don't appear to be from the future.  spa_claim_max_txg
-		 * will have been set for us by ZIL traversal operations
-		 * performed above.
-		 */
-		spa_import_progress_set_notes(spa, "Syncing ZIL claims");
-		txg_wait_synced(spa->spa_dsl_pool, spa->spa_claim_max_txg);
-
-		/*
-		 * Check if we need to request an update of the config. On the
-		 * next sync, we would update the config stored in vdev labels
-		 * and the cachefile (by default /etc/zfs/zpool.cache).
-		 */
-		spa_import_progress_set_notes(spa, "Updating configs");
-		spa_ld_check_for_config_update(spa, config_cache_txg,
-		    update_config_cache);
-
-		/*
-		 * Check if a rebuild was in progress and if so resume it.
-		 * Then check all DTLs to see if anything needs resilvering.
-		 * The resilver will be deferred if a rebuild was started.
-		 */
-		spa_import_progress_set_notes(spa, "Starting resilvers");
-		if (vdev_rebuild_active(spa->spa_root_vdev)) {
-			vdev_rebuild_restart(spa);
-		} else if (!dsl_scan_resilvering(spa->spa_dsl_pool) &&
-		    vdev_resilver_needed(spa->spa_root_vdev, NULL, NULL)) {
-			spa_async_request(spa, SPA_ASYNC_RESILVER);
-		}
-
-		/*
-		 * Log the fact that we booted up (so that we can detect if
-		 * we rebooted in the middle of an operation).
-		 */
-		spa_history_log_version(spa, "open", NULL);
-
-		spa_import_progress_set_notes(spa,
-		    "Restarting device removals");
-		spa_restart_removal(spa);
-		spa_spawn_aux_threads(spa);
-
-		/*
-		 * Delete any inconsistent datasets.
-		 *
-		 * Note:
-		 * Since we may be issuing deletes for clones here,
-		 * we make sure to do so after we've spawned all the
-		 * auxiliary threads above (from which the livelist
-		 * deletion zthr is part of).
-		 */
-		spa_import_progress_set_notes(spa,
-		    "Cleaning up inconsistent objsets");
-		(void) dmu_objset_find(spa_name(spa),
-		    dsl_destroy_inconsistent, NULL, DS_FIND_CHILDREN);
-
-		/*
-		 * Clean up any stale temporary dataset userrefs.
-		 */
-		spa_import_progress_set_notes(spa,
-		    "Cleaning up temporary userrefs");
-		dsl_pool_clean_tmp_userrefs(spa->spa_dsl_pool);
-
-		spa_config_enter(spa, SCL_CONFIG, FTAG, RW_READER);
-		spa_import_progress_set_notes(spa, "Restarting initialize");
-		vdev_initialize_restart(spa->spa_root_vdev);
-		spa_import_progress_set_notes(spa, "Restarting TRIM");
-		vdev_trim_restart(spa->spa_root_vdev);
-		vdev_autotrim_restart(spa);
-		spa_config_exit(spa, SCL_CONFIG, FTAG);
-		spa_import_progress_set_notes(spa, "Finished importing");
+		spa_load_writeable(spa, checkpoint_rewind, update_config_cache);
 	}
 	zio_handle_import_delay(spa, gethrtime() - load_start);
 
@@ -6098,6 +6102,210 @@ int
 spa_open(const char *name, spa_t **spapp, const void *tag)
 {
 	return (spa_open_common(name, spapp, tag, NULL, NULL));
+}
+
+static void
+make_writeable_failed(spa_t *spa, const char *fmt, ...)
+{
+	va_list adx;
+	char buf[256];
+
+	va_start(adx, fmt);
+	(void) vsnprintf(buf, sizeof (buf), fmt, adx);
+	va_end(adx);
+
+	zfs_dbgmsg("spa_load(%s, config %s): FAILED: %s", spa->spa_name,
+	    spa->spa_trust_config ? "trusted" : "untrusted", buf);
+}
+
+static void
+rollback_partial_load(vdev_t *vd)
+{
+	for (int c = 0; c < vd->vdev_children; c++) {
+		vdev_t *cvd = vd->vdev_child[c];
+
+		rollback_partial_load(cvd);
+	}
+
+	if (vd == vd->vdev_top && vdev_is_concrete(vd)) {
+		for (uint64_t m = 0; m < vd->vdev_ms_count; m++) {
+			metaslab_t *msp = vd->vdev_ms[m];
+			mutex_enter(&msp->ms_lock);
+			metaslab_unload(msp);
+			zfs_range_tree_vacate(msp->ms_unflushed_allocs, NULL,
+			    NULL);
+			zfs_range_tree_vacate(msp->ms_unflushed_frees, NULL,
+			    NULL);
+			mutex_exit(&msp->ms_lock);
+			space_map_close(msp->ms_sm);
+			msp->ms_sm = NULL;
+			spa_log_sm_decrement_mscount(vd->vdev_spa,
+			    metaslab_unflushed_txg(msp));
+		}
+	}
+
+	if (vd->vdev_ops->vdev_op_leaf) {
+		space_map_close(vd->vdev_dtl_sm);
+		for (int t = 0; t < DTL_TYPES; t++) {
+			zfs_range_tree_vacate(vd->vdev_dtl[t], NULL, NULL);
+		}
+	}
+}
+
+int
+spa_make_writeable(spa_t *spa)
+{
+
+	uberblock_t ub;
+	nvlist_t *label;
+	int error;
+	vdev_uberblock_load(spa->spa_root_vdev, &ub, &label);
+	if (ub.ub_txg != spa->spa_uberblock.ub_txg) {
+		make_writeable_failed(spa, "newer uberblock detected: "
+		    "txg %llu (had %llu)", (u_longlong_t)ub.ub_txg,
+		    (u_longlong_t)spa->spa_uberblock.ub_txg);
+		error = SET_ERROR(EREMOTEIO);
+		nvlist_free(label);
+		goto err;
+	}
+	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
+
+	if (spa->spa_activity_check) {
+		error = spa_ld_activity_check(spa, &ub, label);
+		if (error) {
+			error = spa_ld_activity_result(spa, error,
+			    "write upgrade");
+			nvlist_free(label);
+			goto err;
+		}
+	}
+	nvlist_free(label);
+
+	/*
+	 * Retrieve information needed to condense indirect vdev mappings.
+	 */
+	error = spa_condense_init(spa);
+	if (error != 0) {
+		make_writeable_failed(spa, "spa_condense_init failed "
+		    "[error=%d]", error);
+		goto err;
+	}
+	boolean_t missing_feat_write = B_FALSE;
+	error = spa_ld_check_features(spa, &missing_feat_write);
+	if (error != 0) {
+		goto err;
+	}
+	if (missing_feat_write) {
+		error = SET_ERROR(EROFS);
+		goto err;
+	}
+
+	/*
+	 * Retrieve the list of auxiliary devices - cache devices and spares -
+	 * and open them.
+	 */
+	error = spa_ld_open_aux_vdevs(spa, SPA_IMPORT_EXISTING);
+	if (error != 0)
+		goto err;
+
+	spa->spa_mode |= SPA_MODE_WRITE;
+	error = vdev_partial_load(spa->spa_root_vdev);
+	if (error != 0)
+		goto err;
+
+	error = spa_ld_log_sm_data(spa);
+	if (error != 0)
+		goto err;
+
+	const char *ereport;
+	error = spa_ld_verify_logs(spa, SPA_IMPORT_EXISTING, &ereport);
+	if (error != 0)
+		goto err;
+
+	spa_namespace_enter(FTAG);
+	spa_config_exit(spa, SCL_STATE_ALL, spa);
+	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_WRITER);
+	spa_namespace_exit(FTAG);
+
+	spa_import_progress_add(spa);
+	zfs_dbgmsg("reopening");
+	vdev_reopen(spa->spa_root_vdev);
+
+	spa_namespace_enter(FTAG);
+	spa_config_exit(spa, SCL_STATE_ALL, spa);
+	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
+	spa_namespace_exit(FTAG);
+	spa_load_writeable(spa, B_FALSE, B_FALSE);
+
+	/*
+	 * Update the config cache to include the newly-imported pool.
+	 */
+	spa_namespace_enter(FTAG);
+	spa_config_exit(spa, SCL_STATE_ALL, spa);
+	spa->spa_load_thread = NULL;
+	spa_config_update(spa, SPA_CONFIG_UPDATE_POOL);
+	spa_namespace_broadcast();
+	spa_namespace_exit(FTAG);
+	spa_import_progress_remove(spa_guid(spa));
+
+	// probably not spa_ld_checkpoint_rewind
+	return (0);
+
+err:
+	spa->spa_load_state = SPA_LOAD_ERROR;
+	for (spa_log_sm_t *sls = avl_first(&spa->spa_sm_logs_by_txg);
+	    sls; sls = AVL_NEXT(&spa->spa_sm_logs_by_txg, sls)) {
+		if (sls->sls_sm) {
+			space_map_close(sls->sls_sm);
+			sls->sls_sm = NULL;
+		}
+	}
+	rollback_partial_load(spa->spa_root_vdev);
+	spa->spa_mode &= ~SPA_MODE_WRITE;
+	spa_unload_log_sm_metadata(spa);
+	if (spa->spa_l2cache.sav_vdevs) {
+		for (int i = 0; i < spa->spa_l2cache.sav_count; i++) {
+			uint64_t pool;
+
+			vdev_t *vd = spa->spa_l2cache.sav_vdevs[i];
+			if (vd != NULL) {
+				ASSERT(vd->vdev_isl2cache);
+
+				if (spa_l2cache_exists(vd->vdev_guid, &pool) &&
+				    pool != 0ULL && l2arc_vdev_present(vd))
+					l2arc_remove_vdev(vd);
+				vdev_clear_stats(vd);
+				vdev_free(vd);
+			}
+		}
+
+		kmem_free(spa->spa_spares.sav_vdevs,
+		    spa->spa_spares.sav_count * sizeof (void *));
+		spa->spa_l2cache.sav_vdevs = NULL;
+	}
+	if (spa->spa_spares.sav_vdevs) {
+		for (int i = 0; i < spa->spa_spares.sav_count; i++) {
+			vdev_t *vd = spa->spa_spares.sav_vdevs[i];
+			vdev_t *tvd;
+			if ((tvd = spa_lookup_by_guid(spa, vd->vdev_guid,
+			    B_FALSE)) != NULL && tvd->vdev_isspare)
+				spa_spare_remove(tvd);
+			vdev_close(vd);
+			vdev_free(vd);
+		}
+
+		kmem_free(spa->spa_spares.sav_vdevs,
+		    spa->spa_spares.sav_count * sizeof (void *));
+		spa->spa_spares.sav_vdevs = NULL;
+	}
+	spa_condense_fini(spa);
+	spa_namespace_enter(FTAG);
+	spa_config_exit(spa, SCL_STATE_ALL, spa);
+	spa->spa_load_thread = NULL;
+	spa_namespace_broadcast();
+	spa_namespace_exit(FTAG);
+	spa->spa_load_state = SPA_LOAD_NONE;
+	return (error);
 }
 
 /*

@@ -6183,6 +6183,46 @@ zfs_ioc_pool_reopen(const char *pool, nvlist_t *innvl, nvlist_t *outnvl)
 }
 
 /*
+ * innvl is not used.
+ *
+ * outnvl is not used.
+ */
+static const zfs_ioc_key_t zfs_keys_pool_make_writeable[] = {
+	/* no nvl keys */
+};
+
+static int
+zfs_ioc_pool_make_writeable(const char *pool, nvlist_t *innvl, nvlist_t *outnvl)
+{
+	(void) innvl, (void) outnvl;
+	spa_t *spa;
+	int error;
+	spa_namespace_enter(FTAG);
+	spa = spa_lookup(pool);
+	if (spa == NULL) {
+		spa_namespace_exit(FTAG);
+		return (SET_ERROR(EIO));
+	}
+
+	if (spa_writeable(spa)) {
+		spa_namespace_exit(FTAG);
+		return (SET_ERROR(EALREADY));
+	}
+
+	// If multihost is enabled, check for remote activity.
+	if (spa_multihost(spa) &&
+	    spa_mmp_remote_host_activity(spa)) {
+		spa_namespace_exit(FTAG);
+		return (SET_ERROR(EREMOTEIO));
+	}
+
+	spa->spa_load_thread = curthread;
+	spa_namespace_exit(FTAG);
+	error = spa_make_writeable(spa);
+	return (error);
+}
+
+/*
  * inputs:
  * zc_name	name of filesystem
  *
@@ -7573,6 +7613,12 @@ zfs_ioctl_init(void)
 	    zfs_ioc_ddt_prune, zfs_secpolicy_config, POOL_NAME,
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE,
 	    zfs_keys_ddt_prune, ARRAY_SIZE(zfs_keys_ddt_prune));
+
+	zfs_ioctl_register("zpool_make_writeable", ZFS_IOC_POOL_MAKE_WRITEABLE,
+	    zfs_ioc_pool_make_writeable, zfs_secpolicy_config, POOL_NAME,
+	    POOL_CHECK_SUSPENDED, B_TRUE, B_TRUE,
+	    zfs_keys_pool_make_writeable,
+	    ARRAY_SIZE(zfs_keys_pool_make_writeable));
 
 	/* IOCTLS that use the legacy function signature */
 

@@ -4398,6 +4398,65 @@ zpool_reopen_one(zpool_handle_t *zhp, void *data)
 	return (0);
 }
 
+static int
+clear_temp_readonly(zfs_handle_t *zhp, void *arg)
+{
+	(void) arg;
+	int error = zfs_iter_filesystems_v2(zhp, 0, clear_temp_readonly, arg);
+	if (error != 0)
+		return (error);
+
+	const char *source;
+	boolean_t readonly_orig = getprop_uint64(zhp, ZFS_PROP_READONLY,
+	    &source);
+	if (readonly_orig)
+		return (0);
+	libzfs_handle_t *hdl = zhp->zfs_hdl;
+	struct mnttab entry;
+
+	if (libzfs_mnttab_find(hdl, zhp->zfs_name, &entry) != 0)
+		return (0);
+	if (!hasmntopt(&entry, MNTOPT_RO))
+		return (0);
+	char mntopts[MNT_LINE_MAX];
+	(void) strlcpy(mntopts, entry.mnt_mntopts, sizeof (mntopts));
+	char *ro = strstr(mntopts, MNTOPT_RO);
+	memcpy(ro, MNTOPT_RW, strlen(MNTOPT_RW));
+	size_t len = strlcat(mntopts, ",remount", sizeof (mntopts));
+	if (len > sizeof (mntopts))
+		return (E2BIG);
+	return (zfs_mount(zhp, mntopts, 0) == 0 ? 0 : errno);
+}
+
+/*
+ * Upgrade one pool from read-only to writeable.
+ */
+int
+zpool_make_writeable(zpool_handle_t *zhp)
+{
+	libzfs_handle_t *hdl = zpool_get_handle(zhp);
+	const char *pool_name = zpool_get_name(zhp);
+	int error;
+
+	error = lzc_make_writeable(pool_name);
+	if (error) {
+		return (zpool_standard_error_fmt(hdl, error,
+		    dgettext(TEXT_DOMAIN, "cannot make '%s' writeable"),
+		    pool_name));
+	}
+
+	zfs_handle_t *zfs_hp = zfs_open(hdl, pool_name, ZFS_TYPE_FILESYSTEM);
+
+	error = clear_temp_readonly(zfs_hp, NULL);
+
+	if (error) {
+		return (zpool_standard_error_fmt(hdl, error,
+		    dgettext(TEXT_DOMAIN, "made '%s' writeable, but not all "
+		    "datasets remounted"), pool_name));
+	}
+	return (error);
+}
+
 /* call into libzfs_core to execute the sync IOCTL per pool */
 int
 zpool_sync_one(zpool_handle_t *zhp, void *data)

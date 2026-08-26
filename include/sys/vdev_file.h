@@ -36,6 +36,7 @@ extern "C" {
 
 typedef struct vdev_file {
 	zfs_file_t	*vf_file;
+	spa_mode_t	vf_mode;
 } vdev_file_t;
 
 extern void vdev_file_init(void);

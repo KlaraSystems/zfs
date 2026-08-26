@@ -3974,6 +3974,121 @@ vdev_load(vdev_t *vd)
 	return (0);
 }
 
+static void
+vdev_partial_load_child(void *arg)
+{
+	vdev_t *vd = arg;
+
+	vd->vdev_load_error = vdev_partial_load(vd);
+}
+
+int
+vdev_partial_load(vdev_t *vd)
+{
+	int children = vd->vdev_children;
+	int error = 0;
+	taskq_t *tq = NULL;
+
+	/*
+	 * It's only worthwhile to use the taskq for the root vdev, because the
+	 * slow part is metaslab_init, and that only happens for top-level
+	 * vdevs.
+	 */
+	if (vd->vdev_ops == &vdev_root_ops && vd->vdev_children > 0) {
+		tq = taskq_create("vdev_partial_load", children, minclsyspri,
+		    children, children, TASKQ_PREPOPULATE);
+	}
+
+	/*
+	 * Recursively load all children.
+	 */
+	for (int c = 0; c < vd->vdev_children; c++) {
+		vdev_t *cvd = vd->vdev_child[c];
+
+		if (tq == NULL || vdev_uses_zvols(cvd)) {
+			cvd->vdev_load_error = vdev_partial_load(cvd);
+		} else {
+			VERIFY(taskq_dispatch(tq, vdev_partial_load_child,
+			    cvd, TQ_SLEEP) != TASKQID_INVALID);
+		}
+	}
+
+	if (tq != NULL) {
+		taskq_wait(tq);
+		taskq_destroy(tq);
+	}
+
+	for (int c = 0; c < vd->vdev_children; c++) {
+		int error = vd->vdev_child[c]->vdev_load_error;
+
+		if (error != 0)
+			return (error);
+	}
+
+	/*
+	 * This variable is only set by ZDB when doing spacemap verification,
+	 * and that codepath has no way to trigger a readonly to RW switch, so
+	 * we can safely assert this here. Any future changes that make this
+	 * possible will need to prevent double-loading of spacemaps and
+	 * possibly other issues.
+	 */
+	ASSERT(!vd->vdev_spa->spa_read_spacemaps);
+	/*
+	 * If this is a top-level vdev, initialize its metaslabs.
+	 */
+	if (vd == vd->vdev_top && vdev_is_concrete(vd)) {
+		objset_t *mos = vd->vdev_spa->spa_meta_objset;
+		for (uint64_t m = 0; m < vd->vdev_ms_count; m++) {
+			uint64_t object;
+			error = dmu_read(mos, vd->vdev_ms_array,
+			    m * sizeof (uint64_t), sizeof (uint64_t), &object,
+			    DMU_READ_PREFETCH);
+			if (error != 0) {
+				vdev_dbgmsg(vd, "vdev_partial_load: failed to "
+				    "read ms_array for metaslab %llu "
+				    "[error=%d]", (u_longlong_t)m, error);
+				break;
+			}
+			if (object == 0)
+				continue;
+			metaslab_t *ms = vd->vdev_ms[m];
+			error = space_map_open(&ms->ms_sm, mos, object,
+			    ms->ms_start, ms->ms_size, vd->vdev_ashift);
+
+			if (error != 0) {
+				vdev_dbgmsg(vd, "vdev_partial_load: failed to "
+				    "open spacemap for metaslab %llu "
+				    "[error=%d]", (u_longlong_t)m, error);
+				break;
+			}
+
+			ASSERT(ms->ms_sm != NULL);
+			ms->ms_allocated_space = space_map_allocated(ms->ms_sm);
+			metaslab_sync_done(ms, 0);
+			metaslab_space_update(ms->ms_group,
+			    metaslab_allocated_space(ms), 0, 0);
+
+			mutex_enter(&ms->ms_lock);
+			metaslab_group_histogram_add(ms->ms_group, ms);
+			mutex_exit(&ms->ms_lock);
+		}
+		if (error != 0)
+			return (error);
+	}
+
+	/*
+	 * If this is a leaf vdev, load its DTL.
+	 */
+	if (vd->vdev_ops->vdev_op_leaf && !vd->vdev_spa->spa_read_spacemaps &&
+	    (error = vdev_dtl_load(vd)) != 0) {
+		vdev_dbgmsg(vd, "vdev_partial_load: vdev_dtl_load failed "
+		    "[error=%d]", error);
+		return (error);
+	}
+
+	return (0);
+}
+
 /*
  * The special vdev case is used for hot spares and l2cache devices.  Its
  * sole purpose it to set the vdev state for the associated vdev.  To do this,

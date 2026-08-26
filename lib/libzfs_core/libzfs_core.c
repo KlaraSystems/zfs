@@ -1759,6 +1759,15 @@ lzc_reopen(const char *pool_name, boolean_t scrub_restart)
 	return (error);
 }
 
+int
+lzc_make_writeable(const char *pool_name)
+{
+	int error;
+
+	error = lzc_ioctl(ZFS_IOC_POOL_MAKE_WRITEABLE, pool_name, NULL, NULL);
+	return (error);
+}
+
 /*
  * Changes initializing state.
  *
