@@ -4065,7 +4065,8 @@ vdev_partial_load(vdev_t *vd)
 			ASSERT(ms->ms_sm != NULL);
 			ms->ms_allocated_space = space_map_allocated(ms->ms_sm);
 			metaslab_sync_done(ms, 0);
-			metaslab_space_update(ms->ms_group,
+			metaslab_space_update(ms->ms_group->mg_vd,
+			    ms->ms_group->mg_class,
 			    metaslab_allocated_space(ms), 0, 0);
 
 			mutex_enter(&ms->ms_lock);

@@ -6169,16 +6169,6 @@ spa_make_writeable(spa_t *spa)
 		goto err;
 	}
 	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
-
-	if (spa->spa_activity_check) {
-		error = spa_ld_activity_check(spa, &ub, label);
-		if (error) {
-			error = spa_ld_activity_result(spa, error,
-			    "write upgrade");
-			nvlist_free(label);
-			goto err;
-		}
-	}
 	nvlist_free(label);
 
 	/*
@@ -6222,30 +6212,30 @@ spa_make_writeable(spa_t *spa)
 	if (error != 0)
 		goto err;
 
-	spa_namespace_enter(FTAG);
+	mutex_enter(&spa_namespace_lock);
 	spa_config_exit(spa, SCL_STATE_ALL, spa);
 	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_WRITER);
-	spa_namespace_exit(FTAG);
+	mutex_exit(&spa_namespace_lock);
 
 	spa_import_progress_add(spa);
 	zfs_dbgmsg("reopening");
 	vdev_reopen(spa->spa_root_vdev);
 
-	spa_namespace_enter(FTAG);
+	mutex_enter(&spa_namespace_lock);
 	spa_config_exit(spa, SCL_STATE_ALL, spa);
 	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
-	spa_namespace_exit(FTAG);
+	mutex_exit(&spa_namespace_lock);
 	spa_load_writeable(spa, B_FALSE, B_FALSE);
 
 	/*
 	 * Update the config cache to include the newly-imported pool.
 	 */
-	spa_namespace_enter(FTAG);
+	mutex_enter(&spa_namespace_lock);
 	spa_config_exit(spa, SCL_STATE_ALL, spa);
 	spa->spa_load_thread = NULL;
 	spa_config_update(spa, SPA_CONFIG_UPDATE_POOL);
-	spa_namespace_broadcast();
-	spa_namespace_exit(FTAG);
+	cv_broadcast(&spa_namespace_cv);
+	mutex_exit(&spa_namespace_lock);
 	spa_import_progress_remove(spa_guid(spa));
 
 	// probably not spa_ld_checkpoint_rewind
@@ -6299,11 +6289,11 @@ err:
 		spa->spa_spares.sav_vdevs = NULL;
 	}
 	spa_condense_fini(spa);
-	spa_namespace_enter(FTAG);
+	mutex_enter(&spa_namespace_lock);
 	spa_config_exit(spa, SCL_STATE_ALL, spa);
 	spa->spa_load_thread = NULL;
-	spa_namespace_broadcast();
-	spa_namespace_exit(FTAG);
+	cv_broadcast(&spa_namespace_cv);
+	mutex_exit(&spa_namespace_lock);
 	spa->spa_load_state = SPA_LOAD_NONE;
 	return (error);
 }

@@ -6197,27 +6197,27 @@ zfs_ioc_pool_make_writeable(const char *pool, nvlist_t *innvl, nvlist_t *outnvl)
 	(void) innvl, (void) outnvl;
 	spa_t *spa;
 	int error;
-	spa_namespace_enter(FTAG);
+	mutex_enter(&spa_namespace_lock);
 	spa = spa_lookup(pool);
 	if (spa == NULL) {
-		spa_namespace_exit(FTAG);
+		mutex_exit(&spa_namespace_lock);
 		return (SET_ERROR(EIO));
 	}
 
 	if (spa_writeable(spa)) {
-		spa_namespace_exit(FTAG);
+		mutex_exit(&spa_namespace_lock);
 		return (SET_ERROR(EALREADY));
 	}
 
 	// If multihost is enabled, check for remote activity.
 	if (spa_multihost(spa) &&
 	    spa_mmp_remote_host_activity(spa)) {
-		spa_namespace_exit(FTAG);
+		mutex_exit(&spa_namespace_lock);
 		return (SET_ERROR(EREMOTEIO));
 	}
 
 	spa->spa_load_thread = curthread;
-	spa_namespace_exit(FTAG);
+	mutex_exit(&spa_namespace_lock);
 	error = spa_make_writeable(spa);
 	return (error);
 }
