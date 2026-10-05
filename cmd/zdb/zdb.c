@@ -34,7 +34,7 @@
  *     under sponsorship from the FreeBSD Foundation.
  * Copyright (c) 2021 Allan Jude
  * Copyright (c) 2021 Toomas Soome <tsoome@me.com>
- * Copyright (c) 2023, 2024, Klara Inc.
+ * Copyright (c) 2023, 2026, Klara Inc.
  * Copyright (c) 2023, Rob Norris <robn@despairlabs.com>
  * Copyright (c) 2026, TrueNAS.
  * Copyright 2026 Edgecast Cloud LLC.
@@ -97,11 +97,11 @@
 #include <libnvpair.h>
 #include <libzutil.h>
 #include <libzfs_core.h>
+#include <zfs_gitrev.h>
 
 #include <libzdb.h>
 
 #include "zdb.h"
-
 
 extern int reference_tracking_enable;
 extern int zfs_recover;
@@ -115,6 +115,10 @@ enum {
 	ARG_ALLOCATED = 256,
 	ARG_BLOCK_BIN_MODE,
 	ARG_BLOCK_CLASSES,
+	ARG_FSCK,
+	ARG_FSCK_BRUTEFORCE,
+	ARG_FSCK_VERIFY_PARENT,
+	ARG_GITREV,
 };
 
 static const char cmdname[] = "zdb";
@@ -726,33 +730,36 @@ static void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "Usage:\t%s [-AbcdDFGhikLMPsvXy] [-e [-V] [-p <path> ...]] "
+	    "Usage:\t%1$s [-AbcdDFGhikLMPsvXy] [-e [-V] [-p <path> ...]] "
 	    "[-I <inflight I/Os>]\n"
 	    "\t\t[-o <var>=<value>]... [-t <txg>] [-U <cache>] [-x <dumpdir>]\n"
 	    "\t\t[-K <key>]\n"
 	    "\t\t[<poolname>[/<dataset | objset id>] [<object | range> ...]]\n"
-	    "\t%s [-AdiPv] [-e [-V] [-p <path> ...]] [-U <cache>] [-K <key>]\n"
+	    "\t%1$s [-AdiPv] [-e [-V] [-p <path> ...]] [-U <cache>] "
+	    "[-K <key>]\n"
 	    "\t\t[<poolname>[/<dataset | objset id>] [<object | range> ...]\n"
-	    "\t%s -B [-e [-V] [-p <path> ...]] [-I <inflight I/Os>]\n"
+	    "\t%1$s -B [-e [-V] [-p <path> ...]] [-I <inflight I/Os>]\n"
 	    "\t\t[-o <var>=<value>]... [-t <txg>] [-U <cache>] [-x <dumpdir>]\n"
 	    "\t\t[-K <key>] <poolname>/<objset id> [<backupflags>]\n"
-	    "\t%s [-v] <bookmark>\n"
-	    "\t%s -C [-A] [-U <cache>] [<poolname>]\n"
-	    "\t%s -l [-Aqu] <device>\n"
-	    "\t%s -m [-AFLPX] [-e [-V] [-p <path> ...]] [-t <txg>] "
+	    "\t%1$s [-v] <bookmark>\n"
+	    "\t%1$s -C [-A] [-U <cache>] [<poolname>]\n"
+	    "\t%1$s -l [-Aqu] <device>\n"
+	    "\t%1$s -m [-AFLPX] [-e [-V] [-p <path> ...]] [-t <txg>] "
 	    "[-U <cache>]\n\t\t<poolname> [<vdev> [<metaslab> ...]]\n"
-	    "\t%s -O [-K <key>] <dataset> <path>\n"
-	    "\t%s -r [-K <key>] <dataset> <path> <destination>\n"
-	    "\t%s -r [-K <key>] -O <dataset> <object-id> <destination>\n"
-	    "\t%s -R [-A] [-e [-V] [-p <path> ...]] [-U <cache>]\n"
+	    "\t%1$s -O [-K <key>] <dataset> <path>\n"
+	    "\t%1$s -r [-K <key>] <dataset> <path> <destination>\n"
+	    "\t%1$s -r [-K <key>] -O <dataset> <object-id> <destination>\n"
+	    "\t%1$s -R [-A] [-e [-V] [-p <path> ...]] [-U <cache>]\n"
 	    "\t\t<poolname> <vdev>:<offset>:<size>[:<flags>]\n"
-	    "\t%s -f [-H] [-e [-V] [-p <path> ...]] [-U <cache>]\n"
+	    "\t%1$s -f [-H] [-e [-V] [-p <path> ...]] [-U <cache>]\n"
 	    "\t\t[<poolname>[/<dataset | objset id>] [<object | range> ...]]\n"
-	    "\t%s -E [-A] word0:word1:...:word15\n"
-	    "\t%s -S [-AP] [-e [-V] [-p <path> ...]] [-U <cache>] "
-	    "<poolname>\n\n",
-	    cmdname, cmdname, cmdname, cmdname, cmdname, cmdname, cmdname,
-	    cmdname, cmdname, cmdname, cmdname, cmdname, cmdname, cmdname);
+	    "\t%1$s -E [-A] word0:word1:...:word15\n"
+	    "\t%1$s -S [-AP] [-e [-V] [-p <path> ...]] [-U <cache>] "
+	    "<poolname>\n"
+	    "\t%1$s --fsck [--fsck-verify-parent] [--fsck-brute-force]\n"
+	    "\t%1$s --version\n"
+	    "\n",
+	    cmdname);
 
 	(void) fprintf(stderr, "    Dataset name must include at least one "
 	    "separator character '/' or '@'\n");
@@ -9898,6 +9905,757 @@ dummy_get_file_info(dmu_object_type_t bonustype, const void *data,
 	abort();
 }
 
+/*
+ * Get SA Attributes
+ *
+ * The are a lot of redundant arguments in our calls to the SA_ADD_BULK_ATTR()
+ * macro, so we wrap it in a local macro to isolate the relevant parts.	The
+ * `bulk` var is what we're filling out, `idx` gets auto-incremented in the
+ * SA_ macro, and we don't use the function pointer.
+ */
+
+#define	SA_GRAB_ATTR(_attr, _var, _sz) SA_ADD_BULK_ATTR(bulk, idx, \
+	sa_attr_table[ZPL_##_attr], NULL, _var, _sz)
+
+/*
+ * Progress Handler for Integrity Scan
+ *
+ * This pair of functions and structure are used to display progress updates
+ * to stdout when verbosity is at least 3.
+ */
+
+static struct {
+	uint64_t next_tick;
+	uint64_t sec_per_tick;
+	uint64_t used_objects;
+	uint64_t count;
+} mi_progress = {0};
+
+static void
+metadata_integrity_progress_init(uint64_t used_objects)
+{
+	mi_progress.sec_per_tick = 5;
+
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+
+	mi_progress.next_tick = tv.tv_sec + mi_progress.sec_per_tick;
+	mi_progress.used_objects = used_objects;
+	mi_progress.count = 0;
+}
+
+static void
+metadata_integrity_progress(const char *action)
+{
+	int verbosity = dump_opt['d'];
+
+	if (verbosity > 3) {
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+
+		if (tv.tv_sec >= mi_progress.next_tick) {
+			uint64_t percent = 0;
+
+			if (mi_progress.used_objects) {
+				percent = (mi_progress.count * 100) /
+				    mi_progress.used_objects;
+			}
+
+			printf("fsck: %3ld%% (%ld/%ld)%s\n",
+			    percent,
+			    mi_progress.count,
+			    mi_progress.used_objects,
+			    action);
+
+			mi_progress.next_tick = tv.tv_sec
+			    + mi_progress.sec_per_tick;
+		}
+	}
+}
+
+/*
+ * Check if a Directory Contains a Given Object
+ *
+ * Arguments:
+ *
+ * os      -> the overall objset being scanned
+ * dir_obj -> the directory object being scanned
+ * needle  -> the object for which we are looking
+ *
+ * Returns:
+ *
+ * B_TRUE if the object contains the needle, B_FALSE otherwise.
+ */
+
+static boolean_t
+metadata_scan_dir_contains_object(objset_t *os, uint64_t dir_obj,
+    uint64_t needle)
+{
+	if (!dump_opt[ARG_FSCK_BRUTEFORCE]) {
+		char	 path[MAXPATHLEN * 2]; /* allow xattr/failure prefix */
+		char	*file = path;
+
+		if (zfs_obj_to_path(os, needle, path, sizeof (path))) {
+			return (B_FALSE);
+		}
+
+		file = strrchr(path, '/');
+		file = file ? &file[1] : path;
+
+		printf("Check '%s' (%s)\n", path, file);
+
+		return (!zap_contains(os, dir_obj, file));
+	}
+
+	/* Brute force method. */
+
+	zap_cursor_t zc;
+	zap_attribute_t *attrp = zap_attribute_long_alloc();
+	boolean_t ret = B_FALSE;
+	int cursor_error = 0;
+	int zl_error = 0;
+
+	for (zap_cursor_init(&zc, os, dir_obj);
+	    0 == (cursor_error = zap_cursor_retrieve(&zc, attrp));
+	    zap_cursor_advance(&zc)) {
+		if (attrp->za_num_integers != 1 ||
+		    attrp->za_integer_length != sizeof (uint64_t)) {
+			printf("Unexpected: num_integers = %lu,"
+			    " integer_length = %u\n",
+			    attrp->za_num_integers,
+			    attrp->za_integer_length);
+			continue;
+		}
+		uint64_t oid;
+
+		zl_error = zap_lookup(os, dir_obj, attrp->za_name,
+		    attrp->za_integer_length, attrp->za_num_integers, &oid);
+
+		if (zl_error) {
+			printf("zap_lookup() returned %d\n", zl_error);
+			goto out;
+		}
+
+		/* Need to mask off the flags. */
+		if ((ZFS_DIRENT_OBJ(oid)) == needle) {
+			ret = B_TRUE;
+			goto out;
+		}
+	}
+
+	if (cursor_error != ENOENT) {
+		printf("Possible corrupt directory %lu?\n"
+		    "\tzap_cursor_retrieve() returned %d\n\t\"%s\"\n",
+		    dir_obj, cursor_error, strerror(cursor_error));
+	}
+
+out:
+	zap_cursor_fini(&zc);
+	zap_attribute_free(attrp);
+
+	return (ret);
+}
+
+/*
+ * Check if an Object contains a Given Object
+ *
+ * Some objects (directories being the salient example...) can contain other
+ * objects; this function checks to see whether a given object requires us to
+ * scan within it, and if so, performs the scan.
+ *
+ * Arguments:
+ *
+ * os     -> the overall objset being scanned
+ * object -> the object which may contain other objects
+ * needle -> the object for which we are looking
+ *
+ * Returns:
+ *
+ * B_TRUE if the object contains the needle, B_FALSE otherwise.
+ */
+
+static boolean_t
+metadata_scan_object_contains_object(objset_t *os, uint64_t object,
+    uint64_t needle)
+{
+	dmu_buf_t *db = NULL;
+	dmu_object_info_t doi;
+	dnode_t *dn;
+	boolean_t dnode_held = B_FALSE;
+	boolean_t ret = B_FALSE;
+	int error;
+
+	if (object == 0) {
+		dn = DMU_META_DNODE(os);
+		dmu_object_info_from_dnode(dn, &doi);
+	} else {
+		/*
+		 * Encrypted datasets will have sensitive bonus buffers
+		 * encrypted. Therefore we cannot hold the bonus buffer and
+		 * must hold the dnode itself instead.
+		 */
+		error = dmu_object_info(os, object, &doi);
+		if (error)
+			fatal("dmu_object_info() failed, errno %u", error);
+
+		if (!key_loaded && os->os_encrypted &&
+		    DMU_OT_IS_ENCRYPTED(doi.doi_bonus_type)) {
+			error = dnode_hold(os, object, FTAG, &dn);
+			if (error)
+				return (B_FALSE);
+			dnode_held = B_TRUE;
+		} else {
+			error = dmu_bonus_hold(os, object, FTAG, &db);
+			if (error)
+				return (B_FALSE);
+			dn = DB_DNODE((dmu_buf_impl_t *)db);
+		}
+	}
+
+	if (!dnode_held &&
+	    (ZDB_OT_TYPE(doi.doi_bonus_type) == DMU_OT_SA) &&
+	    (doi.doi_type == DMU_OT_DIRECTORY_CONTENTS)) {
+		printf("dco:\n");
+		ret = metadata_scan_dir_contains_object(os, object, needle);
+	}
+
+	if (db != NULL) {
+		dmu_buf_rele(db, FTAG);
+	}
+
+	if (dnode_held) {
+		dnode_rele(dn, FTAG);
+	}
+
+	return (ret);
+}
+
+/*
+ * See if a Given File/Directory Object is Referenced by at Least One Directory
+ *
+ * This is a brute force scan of the entire objset, looking for a reference
+ * to the supplied object.  We fall back on this if we must.
+ *
+ * Arguments:
+ *
+ * os     -> the overall objset being scanned
+ * needle -> the object for which we are looking
+ *
+ * Returns:
+ *
+ * B_TRUE if the objset contains the needle, B_FALSE otherwise.
+ */
+
+static boolean_t
+metadata_scan_objset_references_object(objset_t *os, uint64_t needle)
+{
+	uint64_t object = 0;
+	sa_handle_t *sa_handle;
+	sa_bulk_attr_t bulk[2];
+	uint64_t parent;
+	int idx = 0;
+
+	VERIFY3P(os, ==, sa_os);
+
+	if (sa_handle_get(os, needle, NULL, SA_HDL_PRIVATE, &sa_handle)) {
+		if (dump_opt[ARG_FSCK_BRUTEFORCE]) {
+			while (!dmu_object_next(os, &object, B_FALSE, 0)) {
+				if (metadata_scan_object_contains_object(os,
+				    object, needle)) {
+					return (B_TRUE);
+				}
+			}
+		}
+
+		return (0);
+	}
+
+	SA_GRAB_ATTR(PARENT, &parent, 8); /* #defined above */
+
+	if (sa_bulk_lookup(sa_handle, bulk, idx)) {
+		sa_handle_destroy(sa_handle);
+
+		if (dump_opt[ARG_FSCK_BRUTEFORCE]) {
+			while (!dmu_object_next(os, &object, B_FALSE, 0)) {
+				if (metadata_scan_object_contains_object(os,
+				    object, needle)) {
+					return (B_TRUE);
+				}
+			}
+		}
+	} else {
+		sa_handle_destroy(sa_handle);
+
+		/*
+		 * If the parent exists and contains a referece to the
+		 * child, we're good.  The second optional check is because a
+		 * potential orphan may have a stale reference to a parent that
+		 * still exists, but no longer knows about it.
+		 *
+		 * Unfortunately, at least as of the time of this writing,
+		 * the second check is very expensive.
+		 */
+
+		if (!dmu_object_info(os, parent, NULL)) {
+			if (dump_opt[ARG_FSCK_VERIFY_PARENT] ||
+			    dump_opt[ARG_FSCK_BRUTEFORCE]) {
+				return (metadata_scan_object_contains_object(os,
+				    parent, needle));
+			} else {
+				return (B_TRUE);
+			}
+		}
+	}
+
+	return (B_FALSE);
+}
+
+/*
+ * See if a Directory-Referenced Object Exists\
+ *
+ * This function verifies that an object referenced by a directory actually
+ * exists; we're looking for orphaned directory entries whose underlying file
+ * has disappeared.
+ *
+ * The initial test is simply to try pulling the object from the dmu, and
+ * if that succeeds we declare victory.	 If it fails, we do a brute force scan
+ * of the whole objset, looking for the object.
+ *
+ * Arguments:
+ *
+ * os     -> the overall objset being scanned
+ * needle -> the object for which we are looking
+ *
+ * Returns:
+ *
+ * B_TRUE if the objset contains the needle, B_FALSE otherwise.
+ */
+
+static boolean_t
+metadata_scan_objset_contains_object(objset_t *os, uint64_t needle)
+{
+	uint64_t object = 0;
+
+	/* Fast existence check; look the object up in the DMU. */
+
+	if (dmu_object_info(os, needle, NULL)) {
+		return (B_TRUE);
+	}
+
+	if (dump_opt[ARG_FSCK_BRUTEFORCE]) {
+		while (!dmu_object_next(os, &object, B_FALSE, 0)) {
+			if (object == needle) {
+				return (B_TRUE);
+			}
+		}
+	}
+
+	return (B_FALSE);
+}
+
+/*
+ * Walk a Directory, Scanning for Orphaned Files/Entries
+ *
+ * Arguments:
+ *
+ * os        -> the overall objset being scanned
+ * object    -> the object we are walking
+ * verbosity -> the verbosity setting
+ */
+
+static void
+metadata_scan_dir(objset_t *os, uint64_t object, int verbosity)
+{
+	zap_cursor_t zc;
+	zap_attribute_t *attrp = zap_attribute_long_alloc();
+	void *prop = NULL;
+	unsigned i;
+	int cursor_error = 0;
+
+	char path[MAXPATHLEN * 2] = "";
+
+	if (verbosity >= 3) {
+		zfs_obj_to_path(os, object, path, sizeof (path));
+	}
+
+	for (zap_cursor_init(&zc, os, object);
+	    0 == (cursor_error = zap_cursor_retrieve(&zc, attrp));
+	    zap_cursor_advance(&zc)) {
+		boolean_t key64 =
+		    !!(zap_getflags(zc.zc_zap) & ZAP_FLAG_UINT64_KEY);
+
+		uint64_t obj_id	   = ~0ul;
+		uint64_t obj_flags = ~0ul;
+
+		metadata_integrity_progress(path);
+
+		if (attrp->za_num_integers) {
+			int zl_error = 0;
+
+			prop = umem_zalloc(attrp->za_num_integers *
+			    attrp->za_integer_length,
+			    UMEM_NOFAIL);
+
+			if (key64) {
+				zl_error = zap_lookup_uint64(os, object,
+				    (const uint64_t *)attrp->za_name, 1,
+				    attrp->za_integer_length,
+				    attrp->za_num_integers,
+				    prop);
+			} else {
+				zl_error = zap_lookup(os, object,
+				    attrp->za_name,
+				    attrp->za_integer_length,
+				    attrp->za_num_integers,
+				    prop);
+			}
+
+			if (zl_error) {
+				printf("zap_lookup() returned %d\n", zl_error);
+				goto out;
+			}
+
+			if (attrp->za_integer_length != 1 || key64) {
+				for (i = 0; i < attrp->za_num_integers; i++) {
+					switch (attrp->za_integer_length) {
+					case 1:
+						obj_id = ((uint8_t *)prop)[i];
+						break;
+
+					case 2:
+						obj_id = ((uint16_t *)prop)[i];
+						break;
+
+					case 4:
+						obj_id = ((uint32_t *)prop)[i];
+						break;
+
+					case 8:
+						obj_id = ((uint64_t *)prop)[i];
+						obj_flags = obj_id >> 48;
+						obj_id = ZFS_DIRENT_OBJ(obj_id);
+						break;
+					}
+				}
+			}
+
+			if (verbosity >= 6) {
+				printf(" %lX", obj_flags);
+			}
+
+			if (verbosity >= 5) {
+				printf(" %12ld", obj_id);
+			}
+
+		}
+
+		if (verbosity > 4) {
+			if (key64)
+				printf(" 0x%010" PRIu64 "x",
+				    *(uint64_t *)attrp->za_name);
+			else
+				printf(" \"%s\"", attrp->za_name);
+			printf("\n");
+		}
+
+		if (prop) {
+			umem_free(prop,
+			    attrp->za_num_integers * attrp->za_integer_length);
+		}
+	}
+
+	if (cursor_error != ENOENT) {
+		printf("Possible corrupt directory %lu?\n"
+		    "\tzap_cursor_retrieve() returned %d\n\t\"%s\"\n", object,
+		    cursor_error, strerror(cursor_error));
+	}
+out:
+	zap_cursor_fini(&zc);
+	zap_attribute_free(attrp);
+}
+
+/*
+ * Walk a ZNode, Looking for Orphaned Files/Entries
+ *
+ * Arguments:
+ *
+ * os     -> the overall objset being scanned
+ * object -> the object to walk
+ */
+
+static void
+metadata_scan_znode(objset_t *os, uint64_t object)
+{
+	struct {
+		char	 path[MAXPATHLEN * 2]; /* allow xattr/failure prefix */
+		char	 link_target[MAXPATHLEN];
+		uint64_t xattr;
+		uint64_t rdev;
+		uint64_t project_id;
+		uint64_t gen;
+		uint64_t uid;
+		uint64_t gid;
+		uint64_t mode;
+		uint64_t file_size;
+		uint64_t parent;
+		uint64_t links;
+		uint64_t project_flags;
+		uint64_t create_time[2];
+		uint64_t access_time[2];
+		uint64_t modify_time[2];
+		uint64_t change_time[2];
+	} data = {0};
+
+	sa_handle_t *sa_handle;
+	sa_bulk_attr_t bulk[12];
+	int idx = 0;
+
+	VERIFY3P(os, ==, sa_os);
+
+	if (sa_handle_get(os, object, NULL, SA_HDL_PRIVATE, &sa_handle)) {
+		return;
+	}
+
+	SA_GRAB_ATTR(UID,    &data.uid,		   8);
+	SA_GRAB_ATTR(GID,    &data.gid,		   8);
+	SA_GRAB_ATTR(LINKS,  &data.links,	   8);
+	SA_GRAB_ATTR(GEN,    &data.gen,		   8);
+	SA_GRAB_ATTR(MODE,   &data.mode,	   8);
+	SA_GRAB_ATTR(PARENT, &data.parent,	   8);
+	SA_GRAB_ATTR(SIZE,   &data.file_size,	   8);
+	SA_GRAB_ATTR(ATIME,   data.access_time,	  16);
+	SA_GRAB_ATTR(MTIME,   data.modify_time,	  16);
+	SA_GRAB_ATTR(CRTIME,  data.create_time,	  16);
+	SA_GRAB_ATTR(CTIME,   data.change_time,	  16);
+	SA_GRAB_ATTR(FLAGS,  &data.project_flags,  8);
+
+	if (sa_bulk_lookup(sa_handle, bulk, idx)) {
+		sa_handle_destroy(sa_handle);
+		return;
+	}
+
+	switch (zfs_obj_to_path(os, object, data.path, sizeof (data.path))) {
+	case 0:
+		break;
+
+	case ESTALE:
+		snprintf(data.path, sizeof (data.path), "on delete queue");
+		break;
+
+	default:
+		snprintf(data.path, sizeof (data.path),
+		    "path not found, possibly leaked");
+	}
+
+	if (S_ISLNK(data.mode)) {
+		int symlink_size = 0;
+
+		if ((!sa_size(sa_handle, sa_attr_table[ZPL_SYMLINK],
+		    &symlink_size) && symlink_size) &&
+		    (symlink_size < sizeof (data.link_target))) {
+			data.link_target[symlink_size] = '\0';
+
+			if (sa_lookup(sa_handle, sa_attr_table[ZPL_SYMLINK],
+			    &data.link_target, symlink_size) != 0) {
+				data.link_target[0] = 0; /* Failed, zero it. */
+			}
+		}
+	}
+
+	printf("id: %12ld parent: %12ld path: \"%s\"", object, data.parent,
+	    data.path);
+	if (S_ISLNK(data.mode)) {
+		printf(" target: '%s'", data.link_target);
+	}
+	printf("\n");
+
+	sa_handle_destroy(sa_handle);
+}
+
+/*
+ * Scan an Object for Orphaned Files/Entries
+ *
+ * Arguments:
+ *
+ * os	-> the overall objset being scanned
+ * object	-> the object we are walking
+ * verbosity -> the verbosity setting
+ */
+
+static void
+metadata_scan_object(objset_t *os, uint64_t object, int verbosity)
+{
+	dmu_buf_t *db = NULL;
+	dmu_object_info_t doi;
+	dnode_t *dn;
+	boolean_t dnode_held = B_FALSE;
+	int error;
+
+	if (object == 0) {
+		dn = DMU_META_DNODE(os);
+		dmu_object_info_from_dnode(dn, &doi);
+	} else {
+		/*
+		 * Encrypted datasets will have sensitive bonus buffers
+		 * encrypted. Therefore we cannot hold the bonus buffer and
+		 * must hold the dnode itself instead.
+		 */
+		error = dmu_object_info(os, object, &doi);
+		if (error)
+			fatal("dmu_object_info() failed, errno %u", error);
+
+		if (!key_loaded && os->os_encrypted &&
+		    DMU_OT_IS_ENCRYPTED(doi.doi_bonus_type)) {
+			error = dnode_hold(os, object, FTAG, &dn);
+			if (error)
+				fatal("dnode_hold() failed, errno %u", error);
+			dnode_held = B_TRUE;
+		} else {
+			error = dmu_bonus_hold(os, object, FTAG, &db);
+			if (error)
+				fatal("dmu_bonus_hold(%llu) failed, errno %u",
+				    object, error);
+			dn = DB_DNODE((dmu_buf_impl_t *)db);
+		}
+	}
+
+	if (!dnode_held) {
+		switch (ZDB_OT_TYPE(doi.doi_bonus_type)) {
+		case DMU_OT_NONE:
+		case DMU_OT_ZNODE:
+		case DMU_OT_OLDACL:		 /* Old ACL */
+		case DMU_OT_PLAIN_FILE_CONTENTS: /* UINT8 */
+		case DMU_OT_DIRECTORY_CONTENTS:	 /* ZAP */
+		case DMU_OT_MASTER_NODE:	 /* ZAP */
+		case DMU_OT_UNLINKED_SET:	 /* ZAP */
+			break;
+
+		case DMU_OT_SA: /* System Attrs */
+			if (metadata_scan_objset_references_object(os,
+			    object)) {
+				break;
+			}
+
+			switch (doi.doi_type) {
+			case DMU_OT_PLAIN_FILE_CONTENTS: /* UINT8 */
+				printf("Orphan File: ");
+				metadata_scan_znode(os, object);
+				break;
+
+			case DMU_OT_DIRECTORY_CONTENTS: { /* ZAP */
+				char path[MAXPATHLEN * 2];
+
+				/*
+				 * Check for and exclude `/`; it's
+				 * technically an orphan, but...
+				 */
+
+				if (zfs_obj_to_path(os, object, path,
+				    sizeof (path)) ||
+				    strcmp(path, "/")) {
+					printf("Orphan Dir:  ");
+					metadata_scan_znode(os, object);
+				}
+				break;
+			}
+
+			default:
+				break;
+			}
+
+			/*
+			 * If it's a directory, check for orphan dir entries.
+			 */
+
+			if (doi.doi_type == DMU_OT_DIRECTORY_CONTENTS) {
+				metadata_scan_objset_contains_object(os,
+				    object);
+				metadata_scan_dir(os, object, verbosity);
+			}
+
+			break;
+
+		default:
+			printf(">>>> %d <<<<\n",
+			    ZDB_OT_TYPE(doi.doi_bonus_type));
+			break;
+		}
+	} else {
+		printf("\t\t(bonus encrypted)\n");
+	}
+
+	if (db != NULL) dmu_buf_rele(db, FTAG);
+	if (dnode_held) dnode_rele(dn, FTAG);
+}
+
+/*
+ * Perform a Metadata Integrity Scan
+ *
+ * Arguments:
+ *
+ * os -> the objset to be scanned
+ */
+
+static void
+metadata_integrity_scan(objset_t *os)
+{
+	char objset_name[ZFS_MAX_DATASET_NAME_LEN];
+
+	uint64_t referenced_bytes;
+	uint64_t used_objects;
+
+	dmu_objset_stats_t dds = { 0 };
+	uint64_t object = 0;
+	uint64_t scratch;
+	int verbosity = dump_opt['d'];
+	int error;
+
+	dsl_pool_config_enter(dmu_objset_pool(os), FTAG);
+	dmu_objset_fast_stat(os, &dds);
+	dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+
+	if (dds.dds_type == DMU_OST_META) {
+		dds.dds_creation_txg = TXG_INITIAL;
+		used_objects = BP_GET_FILL(os->os_rootbp);
+		referenced_bytes = dsl_dir_phys(
+		    os->os_spa->spa_dsl_pool->dp_mos_dir)->dd_used_bytes;
+	} else {
+		dmu_objset_space(os, &referenced_bytes, &scratch,
+		    &used_objects, &scratch);
+	}
+
+	ASSERT3U(used_objects, ==, BP_GET_FILL(os->os_rootbp));
+
+	metadata_integrity_progress_init(used_objects);
+
+	if (verbosity >= 3) {
+		printf("Objects: %ld\n", used_objects);
+	}
+
+	dmu_objset_name(os, objset_name);
+
+	if (verbosity > 3) {
+		uint64_t count;
+
+		for (count = 0; (error = dmu_object_next(os, &object, B_FALSE,
+		    0)) == 0; count++) {
+			metadata_scan_object(os, object, verbosity);
+			mi_progress.count = count;
+			metadata_integrity_progress(" top level");
+		}
+	} else {
+		while ((error = dmu_object_next(os, &object, B_FALSE,
+		    0)) == 0) {
+			metadata_scan_object(os, object, verbosity);
+		}
+	}
+
+	if (error != ESRCH) {
+		(void) fprintf(stderr, "dmu_object_next() = %d\n", error);
+		abort();
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -10007,6 +10765,14 @@ main(int argc, char **argv)
 		    ARG_BLOCK_BIN_MODE},
 		{"class",		required_argument,	NULL,
 		    ARG_BLOCK_CLASSES},
+		{"fsck",		no_argument,		NULL,
+		    ARG_FSCK},
+		{"fsck-brute-force",	no_argument,		NULL,
+		    ARG_FSCK_BRUTEFORCE },
+		{"fsck-verify-parent",	no_argument,		NULL,
+		    ARG_FSCK_VERIFY_PARENT },
+		{"version",		no_argument,		NULL,
+		    ARG_GITREV},
 		{0, 0, 0, 0}
 	};
 
@@ -10136,7 +10902,6 @@ main(int argc, char **argv)
 				usage();
 			}
 			break;
-
 		case ARG_BLOCK_CLASSES: {
 			char *buf = strdup(optarg), *tok = buf, *next,
 			    *save = NULL;
@@ -10175,6 +10940,19 @@ main(int argc, char **argv)
 			free(buf);
 			break;
 		}
+		case ARG_FSCK:
+			dump_opt[ARG_FSCK]++;
+			break;
+		case ARG_FSCK_BRUTEFORCE:
+			dump_opt[ARG_FSCK_BRUTEFORCE] = 1;
+			break;
+		case ARG_FSCK_VERIFY_PARENT:
+			dump_opt[ARG_FSCK_VERIFY_PARENT] = 1;
+			break;
+		case ARG_GITREV:
+			printf(ZFS_META_GITREV "\n");
+			zdb_exit(0);
+			break;
 		default:
 			usage();
 			break;
@@ -10591,7 +11369,10 @@ retry_lookup:
 
 	argv++;
 	argc--;
-	if (dump_opt['r']) {
+
+	if (dump_opt[ARG_FSCK]) {
+		metadata_integrity_scan(os);
+	} else if (dump_opt['r']) {
 		error = zdb_copy_object(os, object, argv[1]);
 	} else if (!dump_opt['R']) {
 		flagbits['d'] = ZOR_FLAG_DIRECTORY;
