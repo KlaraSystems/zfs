@@ -863,6 +863,7 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 			/* only rw->ro allowed for now */
 			if (!error && intval == 1 && !spa_writeable(spa))
 				error = SET_ERROR(ENOTSUP);
+
 			break;
 
 		case ZPOOL_PROP_CACHEFILE:
@@ -1021,7 +1022,7 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 		    nvp, 6, ZFS_SPACE_CHECK_RESERVED));
 	}
 
-	if (make_rw) {
+	if (make_rw && !spa_writeable(spa)) {
 		spa->spa_load_thread = curthread;
 		error = spa_make_writeable(spa);
 	}
