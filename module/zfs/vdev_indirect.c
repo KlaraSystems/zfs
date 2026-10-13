@@ -850,7 +850,7 @@ vdev_indirect_sync_obsolete(vdev_t *vd, dmu_tx_t *tx)
 }
 
 int
-spa_condense_init(spa_t *spa)
+spa_condense_init(spa_t *spa, boolean_t force_writeable)
 {
 	int error = zap_lookup(spa->spa_meta_objset,
 	    DMU_POOL_DIRECTORY_OBJECT,
@@ -858,7 +858,7 @@ spa_condense_init(spa_t *spa)
 	    sizeof (spa->spa_condensing_indirect_phys) / sizeof (uint64_t),
 	    &spa->spa_condensing_indirect_phys);
 	if (error == 0) {
-		if (spa_writeable(spa)) {
+		if (spa_writeable(spa) || force_writeable) {
 			spa->spa_condensing_indirect =
 			    spa_condensing_indirect_create(spa);
 		}

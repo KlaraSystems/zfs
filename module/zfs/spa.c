@@ -4716,7 +4716,7 @@ spa_ld_open_indirect_vdev_metadata(spa_t *spa)
 	/*
 	 * Retrieve information needed to condense indirect vdev mappings.
 	 */
-	error = spa_condense_init(spa);
+	error = spa_condense_init(spa, B_FALSE);
 	if (error != 0) {
 		spa_load_failed(spa, "spa_condense_init failed [error=%d]",
 		    error);
@@ -6196,7 +6196,6 @@ spa_make_writeable(spa_t *spa)
 	nvlist_t *label;
 	int error;
 	vdev_uberblock_load(spa->spa_root_vdev, &ub, &label);
-	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
 	if (ub.ub_txg != spa->spa_uberblock.ub_txg) {
 		make_writeable_failed(spa, "newer uberblock detected: "
 		    "txg %llu (had %llu)", (u_longlong_t)ub.ub_txg,
@@ -6217,11 +6216,10 @@ spa_make_writeable(spa_t *spa)
 		goto err;
 	}
 
-	spa->spa_mode |= SPA_MODE_WRITE;
 	/*
 	 * Retrieve information needed to condense indirect vdev mappings.
 	 */
-	error = spa_condense_init(spa);
+	error = spa_condense_init(spa, B_TRUE);
 	if (error != 0) {
 		make_writeable_failed(spa, "spa_condense_init failed "
 		    "[error=%d]", error);
@@ -6236,6 +6234,8 @@ spa_make_writeable(spa_t *spa)
 	if (error != 0)
 		goto err;
 
+	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
+	spa->spa_mode |= SPA_MODE_WRITE;
 	error = vdev_partial_load(spa->spa_root_vdev);
 	if (error != 0)
 		goto err;
