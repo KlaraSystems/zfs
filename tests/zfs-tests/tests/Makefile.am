@@ -1937,6 +1937,19 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/rootpool/rootpool_003_neg.ksh \
 	functional/rootpool/rootpool_007_pos.ksh \
 	functional/rootpool/setup.ksh \
+	functional/rorw/upgrade_rorw_001.ksh \
+	functional/rorw/upgrade_rorw_002.ksh \
+	functional/rorw/upgrade_rorw_003.ksh \
+	functional/rorw/upgrade_rorw_004.ksh \
+	functional/rorw/upgrade_rorw_007.ksh \
+	functional/rorw/upgrade_rorw_008.ksh \
+	functional/rorw/upgrade_rorw_009.ksh \
+	functional/rorw/upgrade_rorw_010.ksh \
+	functional/rorw/upgrade_rorw_011.ksh \
+	functional/rorw/upgrade_rorw_012.ksh \
+	functional/rorw/upgrade_rorw_013.ksh \
+	functional/rorw/upgrade_rorw_014.ksh \
+	functional/rorw/upgrade_rorw_015.ksh \
 	functional/rsend/cleanup.ksh \
 	functional/rsend/recv_dedup_encrypted_zvol.ksh \
 	functional/rsend/recv_dedup.ksh \

@@ -939,6 +939,16 @@ tags = ['functional', 'reservation']
 tests = ['rootpool_002_neg', 'rootpool_003_neg', 'rootpool_007_pos']
 tags = ['functional', 'rootpool']
 
+[tests/functional/rorw]
+tests = ['upgrade_rorw_001', 'upgrade_rorw_002', 'upgrade_rorw_003',
+    'upgrade_rorw_004', 'upgrade_rorw_007', 'upgrade_rorw_008',
+    'upgrade_rorw_009', 'upgrade_rorw_010', 'upgrade_rorw_011',
+    'upgrade_rorw_012', 'upgrade_rorw_013', 'upgrade_rorw_014',
+    'upgrade_rorw_015']
+tags = ['functional', 'rorw']
+pre =
+post =
+
 [tests/functional/rsend]
 tests = ['recv_dedup', 'recv_dedup_encrypted_zvol', 'rsend_001_pos',
     'rsend_002_pos', 'rsend_003_pos', 'rsend_004_pos', 'rsend_005_pos',
