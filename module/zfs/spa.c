@@ -6250,6 +6250,7 @@ spa_make_writeable(spa_t *spa)
 	spa_import_progress_add(spa);
 	vdev_reopen(spa->spa_root_vdev);
 
+	vdev_dtl_reassess(spa->spa_root_vdev, 0, 0, B_FALSE, B_FALSE);
 	mutex_enter(&spa_namespace_lock);
 	spa_config_exit(spa, SCL_STATE_ALL, spa);
 	spa_config_enter(spa, SCL_STATE_ALL | SCL_CONFIG, spa, RW_READER);
