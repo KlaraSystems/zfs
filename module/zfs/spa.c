@@ -6203,18 +6203,18 @@ spa_make_writeable(spa_t *spa)
 		    (u_longlong_t)spa->spa_uberblock.ub_txg);
 		error = SET_ERROR(EREMOTEIO);
 		nvlist_free(label);
-		goto err;
+		goto err2;
 	}
 	nvlist_free(label);
 
 	boolean_t missing_feat_write = B_FALSE;
 	error = spa_ld_check_features(spa, &missing_feat_write);
 	if (error != 0) {
-		goto err;
+		goto err2;
 	}
 	if (missing_feat_write) {
 		error = SET_ERROR(EROFS);
-		goto err;
+		goto err2;
 	}
 
 	/*
@@ -6224,7 +6224,7 @@ spa_make_writeable(spa_t *spa)
 	if (error != 0) {
 		make_writeable_failed(spa, "spa_condense_init failed "
 		    "[error=%d]", error);
-		goto err;
+		goto err2;
 	}
 
 	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
@@ -6323,6 +6323,7 @@ err:
 	spa->spa_load_thread = NULL;
 	cv_broadcast(&spa_namespace_cv);
 	mutex_exit(&spa_namespace_lock);
+err2:
 	spa->spa_load_state = SPA_LOAD_NONE;
 	return (error);
 }
