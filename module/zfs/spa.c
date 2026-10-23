@@ -6320,7 +6320,10 @@ err:
 	spa->spa_load_thread = NULL;
 	cv_broadcast(&spa_namespace_cv);
 	mutex_exit(&spa_namespace_lock);
+	spa->spa_load_state = SPA_LOAD_NONE;
+	return (error);
 err2:
+	spa->spa_load_thread = NULL;
 	spa->spa_load_state = SPA_LOAD_NONE;
 	return (error);
 }
