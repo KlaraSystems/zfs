@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: CDDL-1.0
+#
+# This file and its contents are supplied under the terms of the
+# Common Development and Distribution License ("CDDL"), version 1.0.
+# You may only use this file in accordance with the terms of version
+# 1.0 of the CDDL.
+#
+# A full copy of the text of the CDDL should have accompanied this
+# source.  A copy of the CDDL is also available via the Internet at
+# http://www.illumos.org/license/CDDL.
+#
+# Tests covering live pool RW->RO conversion (zpool set readonly=on),
+# plus some related readonly import/export behavior.
+#
+
+[DEFAULT]
+pre = setup
+quiet = False
+pre_user = root
+user = root
+timeout = 600
+post_user = root
+post = cleanup
+failsafe_user = root
+failsafe = callbacks/zfs_failsafe
+tags = ['functional', 'readonly']
+
+[tests/functional/cli_root/zpool_set]
+tests = ['zpool_set_readonly_001_pos', 'zpool_set_readonly_002_pos',
+    'zpool_set_readonly_003_pos', 'zpool_set_readonly_004_pos',
+    'zpool_set_readonly_005_pos', 'zpool_set_readonly_006_pos',
+    'zpool_set_readonly_007_pos',
+    'zpool_set_readonly_001_neg',
+    'zpool_set_readonly_003_neg', 'zpool_set_readonly_004_neg',
+    'zpool_set_readonly_005_neg']
+tags = ['functional', 'cli_root', 'zpool_set', 'readonly']
+
+[tests/functional/cli_root/zfs_set]
+tests = ['readonly_001_pos']
+tags = ['functional', 'cli_root', 'zfs_set', 'readonly']
+
+[tests/functional/cli_root/zfs_mount]
+tests = ['zfs_mount_remount']
+tags = ['functional', 'cli_root', 'zfs_mount', 'readonly']
+
+[tests/functional/cli_root/zfs_send]
+tests = ['zfs_send_005_pos']
+tags = ['functional', 'cli_root', 'zfs_send', 'readonly']
+
+[tests/functional/rsend]
+tests = ['rsend_014_pos']
+tags = ['functional', 'rsend', 'readonly']
+
+[tests/functional/upgrade]
+tests = ['upgrade_readonly_pool']
+tags = ['functional', 'upgrade', 'readonly']
+
+[tests/functional/pool_checkpoint]
+tests = ['checkpoint_ro_rewind']
+tags = ['functional', 'pool_checkpoint', 'readonly']

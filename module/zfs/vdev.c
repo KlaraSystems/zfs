@@ -2711,7 +2711,7 @@ void
 vdev_close(vdev_t *vd)
 {
 	vdev_t *pvd = vd->vdev_parent;
-	spa_t *spa __maybe_unused = vd->vdev_spa;
+	spa_t *spa = vd->vdev_spa;
 
 	ASSERT(vd != NULL);
 	ASSERT(vd->vdev_open_thread == curthread ||

@@ -19,6 +19,8 @@ STACK_TRACER="no"
 ZED_PIDFILE=${ZED_PIDFILE:-/var/run/zed.pid}
 LDMOD=${LDMOD:-/sbin/modprobe}
 DELMOD=${DELMOD:-/sbin/rmmod}
+MODINFO=${MODINFO:-/sbin/modinfo}
+LSMOD=${LSMOD:-/sbin/lsmod}
 
 KMOD_ZLIB_DEFLATE=${KMOD_ZLIB_DEFLATE:-zlib_deflate}
 KMOD_ZLIB_INFLATE=${KMOD_ZLIB_INFLATE:-zlib_inflate}
@@ -84,11 +86,11 @@ check_modules_linux() {
 		NAME="${KMOD##*/}"
 		NAME="${NAME%.ko}"
 
-		if lsmod | grep -E -q "^${NAME}"; then
+		if $LSMOD | grep -E -q "^${NAME}"; then
 			LOADED_MODULES="$LOADED_MODULES\t$NAME\n"
 		fi
 
-		if ! modinfo "$KMOD" >/dev/null 2>&1; then
+		if ! $MODINFO "$KMOD" >/dev/null 2>&1; then
 			MISSING_MODULES="$MISSING_MODULES\t${KMOD}\n"
 		fi
 	done
@@ -111,11 +113,11 @@ check_modules_linux() {
 load_module_linux() {
 	KMOD=$1
 
-	FILE=$(modinfo "$KMOD" 2>&1 | awk 'NR == 1 && /zlib/ && /not found/ {print "(builtin)"; exit}  /^filename:/ {print $2}')
+	FILE=$($MODINFO "$KMOD" 2>&1 | awk 'NR == 1 && /zlib/ && /not found/ {print "(builtin)"; exit}  /^filename:/ {print $2}')
 	[ "$FILE" = "(builtin)" ] && return
 
 	if [ "$VERBOSE" = "yes" ]; then
-		VERSION=$(modinfo "$KMOD" | awk '/^version:/ {print $2}')
+		VERSION=$($MODINFO "$KMOD" | awk '/^version:/ {print $2}')
 		echo "Loading: $FILE ($VERSION)"
 	fi
 
