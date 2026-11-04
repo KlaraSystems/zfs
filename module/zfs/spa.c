@@ -6177,8 +6177,6 @@ rollback_partial_load(vdev_t *vd)
 			mutex_exit(&msp->ms_lock);
 			space_map_close(msp->ms_sm);
 			msp->ms_sm = NULL;
-			spa_log_sm_decrement_mscount(vd->vdev_spa,
-			    metaslab_unflushed_txg(msp));
 		}
 	}
 
@@ -6281,7 +6279,6 @@ err:
 	}
 	rollback_partial_load(spa->spa_root_vdev);
 	spa->spa_mode &= ~SPA_MODE_WRITE;
-	spa_unload_log_sm_metadata(spa);
 	if (spa->spa_l2cache.sav_vdevs) {
 		for (int i = 0; i < spa->spa_l2cache.sav_count; i++) {
 			uint64_t pool;
