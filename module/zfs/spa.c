@@ -6274,15 +6274,24 @@ spa_resume_writeable(spa_t *spa)
 static void
 rollback_partial_load(vdev_t *vd)
 {
-	for (int c = 0; c < vd->vdev_children; c++) {
-		vdev_t *cvd = vd->vdev_child[c];
-
-		rollback_partial_load(cvd);
-	}
+	for (int c = 0; c < vd->vdev_children; c++)
+		rollback_partial_load(vd->vdev_child[c]);
 
 	if (vd == vd->vdev_top && vdev_is_concrete(vd)) {
 		for (uint64_t m = 0; m < vd->vdev_ms_count; m++) {
 			metaslab_t *msp = vd->vdev_ms[m];
+
+			if (msp->ms_sm == NULL)
+				continue;
+
+			mutex_enter(&msp->ms_lock);
+			metaslab_group_histogram_remove(msp->ms_group, msp);
+			mutex_exit(&msp->ms_lock);
+
+			metaslab_space_update(msp->ms_group->mg_vd,
+			    msp->ms_group->mg_class,
+			    -metaslab_allocated_space(msp), 0, 0);
+
 			mutex_enter(&msp->ms_lock);
 			metaslab_unload(msp);
 			zfs_range_tree_vacate(msp->ms_unflushed_allocs, NULL,
@@ -6290,17 +6299,64 @@ rollback_partial_load(vdev_t *vd)
 			zfs_range_tree_vacate(msp->ms_unflushed_frees, NULL,
 			    NULL);
 			mutex_exit(&msp->ms_lock);
+
 			space_map_close(msp->ms_sm);
 			msp->ms_sm = NULL;
+			msp->ms_allocated_space = 0;
 		}
 	}
 
 	if (vd->vdev_ops->vdev_op_leaf) {
 		space_map_close(vd->vdev_dtl_sm);
+		vd->vdev_dtl_sm = NULL;
 		for (int t = 0; t < DTL_TYPES; t++) {
 			zfs_range_tree_vacate(vd->vdev_dtl[t], NULL, NULL);
 		}
 	}
+}
+
+/*
+ * Undo spa_ld_log_sm_data() side effects without destroying
+ * spa_sm_logs_by_txg (that comes from spa_ld_log_sm_metadata()
+ * at readonly import and must remain).
+ */
+static void
+spa_rollback_log_sm_data(spa_t *spa)
+{
+	log_summary_entry_t *e;
+
+	for (metaslab_t *m = avl_first(&spa->spa_metaslabs_by_flushed);
+	    m != NULL; m = AVL_NEXT(&spa->spa_metaslabs_by_flushed, m)) {
+		vdev_t *vd = m->ms_group->mg_vd;
+		metaslab_class_t *mc = m->ms_group->mg_class;
+		uint64_t allocs = zfs_range_tree_space(m->ms_unflushed_allocs);
+		uint64_t frees = zfs_range_tree_space(m->ms_unflushed_frees);
+
+		if (allocs != 0)
+			metaslab_space_update(vd, mc, -allocs, 0, 0);
+		if (frees != 0)
+			metaslab_space_update(vd, mc, frees, 0, 0);
+
+		mutex_enter(&m->ms_lock);
+		zfs_range_tree_vacate(m->ms_unflushed_allocs, NULL, NULL);
+		zfs_range_tree_vacate(m->ms_unflushed_frees, NULL, NULL);
+		m->ms_allocated_space = (m->ms_sm != NULL) ?
+		    space_map_allocated(m->ms_sm) : 0;
+		mutex_exit(&m->ms_lock);
+	}
+
+	while ((e = list_remove_head(&spa->spa_log_summary)) != NULL)
+		kmem_free(e, sizeof (*e));
+
+	for (spa_log_sm_t *sls = avl_first(&spa->spa_sm_logs_by_txg);
+	    sls != NULL;
+	    sls = AVL_NEXT(&spa->spa_sm_logs_by_txg, sls)) {
+		sls->sls_nblocks = 0;
+		ASSERT0P(sls->sls_sm);
+	}
+
+	spa->spa_unflushed_stats.sus_nblocks = 0;
+	spa->spa_unflushed_stats.sus_memused = 0;
 }
 
 int
@@ -6400,7 +6456,10 @@ err:
 			sls->sls_sm = NULL;
 		}
 	}
+
+	spa_rollback_log_sm_data(spa);
 	rollback_partial_load(spa->spa_root_vdev);
+
 	spa->spa_mode &= ~SPA_MODE_WRITE;
 	if (spa->spa_l2cache.sav_vdevs) {
 		for (int i = 0; i < spa->spa_l2cache.sav_count; i++) {
@@ -6418,8 +6477,8 @@ err:
 			}
 		}
 
-		kmem_free(spa->spa_spares.sav_vdevs,
-		    spa->spa_spares.sav_count * sizeof (void *));
+		kmem_free(spa->spa_l2cache.sav_vdevs,
+		    spa->spa_l2cache.sav_count * sizeof (void *));
 		spa->spa_l2cache.sav_vdevs = NULL;
 	}
 	if (spa->spa_spares.sav_vdevs) {
