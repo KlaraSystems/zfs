@@ -142,6 +142,13 @@ int zfs_ccw_retry_interval = 300;
  * are currently 4. If this changes, update the #define in ztest.c
  */
 int spa_simulate_writable_mounts = 0;
+
+/*
+ * Countdown used by ztest_make_writeable() to force failures at each
+ * site that takes spa_make_writeable()'s err: path (exercises rollback).
+ * There are currently 3. If this changes, update the #define in ztest.c
+ */
+int spa_simulate_make_writeable_fail = 0;
 #endif
 
 typedef enum zti_modes {
@@ -6406,14 +6413,35 @@ spa_make_writeable(spa_t *spa)
 
 	spa_config_enter(spa, SCL_STATE_ALL, spa, RW_READER);
 	spa->spa_mode |= SPA_MODE_WRITE;
+#ifndef	_KERNEL
+	if (spa_simulate_make_writeable_fail > 0 &&
+	    --spa_simulate_make_writeable_fail == 0) {
+		error = SET_ERROR(EIO);
+		goto err;
+	}
+#endif
 	error = vdev_partial_load(spa->spa_root_vdev);
 	if (error != 0)
 		goto err;
 
+#ifndef	_KERNEL
+	if (spa_simulate_make_writeable_fail > 0 &&
+	    --spa_simulate_make_writeable_fail == 0) {
+		error = SET_ERROR(EIO);
+		goto err;
+	}
+#endif
 	error = spa_ld_log_sm_data(spa);
 	if (error != 0)
 		goto err;
 
+#ifndef	_KERNEL
+	if (spa_simulate_make_writeable_fail > 0 &&
+	    --spa_simulate_make_writeable_fail == 0) {
+		error = SET_ERROR(EIO);
+		goto err;
+	}
+#endif
 	const char *ereport;
 	error = spa_ld_verify_logs(spa, SPA_IMPORT_EXISTING, &ereport);
 	if (error != 0)

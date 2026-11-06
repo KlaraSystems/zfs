@@ -278,6 +278,7 @@ extern unsigned long zfs_reconstruct_indirect_damage_fraction;
 extern uint64_t raidz_expand_max_reflow_bytes;
 extern uint_t raidz_expand_pause_point;
 extern int spa_simulate_writable_mounts;
+extern int spa_simulate_make_writeable_fail;
 extern boolean_t ddt_prune_artificial_age;
 extern boolean_t ddt_dump_prune_histogram;
 
@@ -8220,6 +8221,197 @@ ztest_readonly(void)
 	umem_free(check, size);
 }
 
+/* keep in sync with spa_simulate_make_writeable_fail sites in spa.c */
+#define	ZTEST_MAKE_WRITEABLE_FAIL_CALLS	3
+
+static int
+ztest_make_writeable_try_convert(spa_t *spa)
+{
+	nvlist_t *props;
+	int error;
+
+	props = fnvlist_alloc();
+	fnvlist_add_uint64(props, zpool_prop_to_name(ZPOOL_PROP_READONLY), 0);
+	error = spa_prop_set(spa, props);
+	fnvlist_free(props);
+	return (error);
+}
+
+static void
+ztest_make_writeable_verify_ro(spa_t *spa)
+{
+	VERIFY(!spa_writeable(spa));
+	VERIFY3U(spa_mode(spa), ==, SPA_MODE_READ);
+	VERIFY0P(spa->spa_load_thread);
+	VERIFY3U(spa->spa_final_txg, ==, UINT64_MAX);
+	VERIFY0(spa->spa_unflushed_stats.sus_nblocks);
+	VERIFY0(spa->spa_unflushed_stats.sus_memused);
+	VERIFY(list_is_empty(&spa->spa_log_summary));
+}
+
+/*
+ * Import a pool readonly, force failures at each spa_make_writeable() err:
+ * site (exercising rollback), then convert successfully and verify writes.
+ */
+static void
+ztest_make_writeable(void)
+{
+	ztest_ds_t *zd = &ztest_ds[0];
+	spa_t *spa;
+	ztest_od_t od;
+	objset_t *os;
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	const uint64_t size = 8192;
+	uint64_t *buf, *check;
+	uint64_t object;
+	int error;
+	nvlist_t *props;
+
+	/* not supported during RAIDZ expansion */
+	if (ztest_opts.zo_raid_do_expand)
+		return;
+
+	if (ztest_opts.zo_verbose >= 3)
+		(void) printf("testing spa_make_writeable()...\n");
+
+	buf = umem_alloc(size, UMEM_NOFAIL);
+	check = umem_alloc(size, UMEM_NOFAIL);
+
+	/* Write some data while the pool is writable, then export. */
+	raidz_scratch_verify();
+	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
+	VERIFY0(spa_open(ztest_opts.zo_pool, &spa, FTAG));
+	VERIFY0(ztest_dataset_open(0));
+	ztest_spa = spa;
+	VERIFY(spa_writeable(spa));
+
+	ztest_od_init(&od, 0, FTAG, 0, DMU_OT_UINT64_OTHER, size, 0, 0);
+	VERIFY0(ztest_object_init(zd, &od, sizeof (od), B_TRUE));
+	object = od.od_object;
+
+	for (size_t i = 0; i < size / sizeof (*buf); i++)
+		buf[i] = 0xa5a5000000000000ULL | i;
+	VERIFY0(ztest_write(zd, object, 0, size, buf));
+	VERIFY0(zil_commit(zd->zd_zilog, object));
+	txg_wait_synced(spa_get_dsl(spa), 0);
+	ztest_dataset_close(0);
+	spa_close(spa, FTAG);
+	VERIFY0(spa_export(ztest_opts.zo_pool, NULL, B_FALSE, B_FALSE));
+	kernel_fini();
+
+	/* Re-import readonly so spa_make_writeable() takes the full path. */
+	raidz_scratch_verify();
+	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
+	{
+		importargs_t args = { 0 };
+		nvlist_t *cfg = NULL;
+		char *searchdirs[1];
+		libpc_handle_t lpch = {
+			.lpc_lib_handle = NULL,
+			.lpc_ops = &libzpool_config_ops,
+			.lpc_printerr = B_TRUE
+		};
+
+		searchdirs[0] = ztest_opts.zo_dir;
+		args.paths = 1;
+		args.path = searchdirs;
+		args.can_be_active = B_FALSE;
+
+		props = fnvlist_alloc();
+		fnvlist_add_uint64(props,
+		    zpool_prop_to_name(ZPOOL_PROP_READONLY), 1);
+		VERIFY0(zpool_find_config(&lpch, ztest_opts.zo_pool, &cfg,
+		    &args));
+		VERIFY0(spa_import(ztest_opts.zo_pool, cfg, props,
+		    ZFS_IMPORT_MISSING_LOG));
+		fnvlist_free(cfg);
+		fnvlist_free(props);
+	}
+
+	VERIFY0(spa_open(ztest_opts.zo_pool, &spa, FTAG));
+	ztest_spa = spa;
+	VERIFY(!spa_writeable(spa));
+	VERIFY3U(spa->spa_final_txg, ==, UINT64_MAX);
+
+	for (int call = 0; call < ZTEST_MAKE_WRITEABLE_FAIL_CALLS; call++) {
+		if (ztest_opts.zo_verbose >= 3) {
+			(void) printf("spa_make_writeable() fail "
+			    "call site %d...\n", call);
+		}
+
+		spa_simulate_make_writeable_fail = call + 1;
+		error = ztest_make_writeable_try_convert(spa);
+		VERIFY3S(error, ==, EIO);
+
+		if (spa_simulate_make_writeable_fail != 0) {
+			if (ztest_opts.zo_verbose >= 3) {
+				(void) printf("spa_make_writeable() failed "
+				    "before site %d (left=%d)\n", call,
+				    spa_simulate_make_writeable_fail);
+			}
+			spa_simulate_make_writeable_fail = 0;
+		}
+
+		ztest_make_writeable_verify_ro(spa);
+
+		ztest_dataset_name(name, ztest_opts.zo_pool, 0);
+		VERIFY3S(ztest_dmu_objset_own(name, DMU_OST_OTHER, B_FALSE,
+		    B_TRUE, FTAG, &os), ==, EROFS);
+		VERIFY0(ztest_dmu_objset_own(name, DMU_OST_OTHER, B_TRUE,
+		    B_TRUE, FTAG, &os));
+		memset(check, 0, size);
+		VERIFY0(dmu_read(os, object, 0, size, check,
+		    DMU_READ_NO_PREFETCH));
+		VERIFY0(memcmp(buf, check, size));
+		dmu_objset_disown(os, B_TRUE, FTAG);
+	}
+
+	/* Successful conversion after rollback must leave a healthy pool. */
+	spa_simulate_make_writeable_fail = 0;
+	error = ztest_make_writeable_try_convert(spa);
+	VERIFY0(error);
+	VERIFY(spa_writeable(spa));
+	VERIFY(spa_mode(spa) & SPA_MODE_WRITE);
+
+	VERIFY0(ztest_dataset_open(0));
+	for (size_t i = 0; i < size / sizeof (*buf); i++)
+		buf[i] = 0xb1b1000000000000ULL | i;
+	VERIFY0(ztest_write(zd, object, 0, size, buf));
+	VERIFY0(zil_commit(zd->zd_zilog, object));
+	txg_wait_synced(spa_get_dsl(spa), 0);
+	memset(check, 0, size);
+	VERIFY0(dmu_read(zd->zd_os, object, 0, size, check,
+	    DMU_READ_NO_PREFETCH));
+	VERIFY0(memcmp(buf, check, size));
+	ztest_dataset_close(0);
+
+	spa_close(spa, FTAG);
+	VERIFY0(spa_export(ztest_opts.zo_pool, NULL, B_FALSE, B_FALSE));
+	kernel_fini();
+
+	raidz_scratch_verify();
+	kernel_init(SPA_MODE_READ | SPA_MODE_WRITE);
+	ztest_import_impl();
+	VERIFY0(spa_open(ztest_opts.zo_pool, &spa, FTAG));
+	ztest_spa = spa;
+	VERIFY(spa_writeable(spa));
+	VERIFY0(ztest_dataset_open(0));
+
+	VERIFY0(ztest_object_init(zd, &od, sizeof (od), B_FALSE));
+	VERIFY3U(od.od_object, ==, object);
+	memset(check, 0, size);
+	VERIFY0(dmu_read(zd->zd_os, object, 0, size, check,
+	    DMU_READ_NO_PREFETCH));
+	VERIFY0(memcmp(buf, check, size));
+
+	ztest_dataset_close(0);
+	spa_close(spa, FTAG);
+	kernel_fini();
+
+	umem_free(buf, size);
+	umem_free(check, size);
+}
+
 /*
  * Import a storage pool with the given name.
  */
@@ -8250,6 +8442,8 @@ ztest_import(ztest_shared_t *zs)
 		ztest_freeze();
 		ztest_run_zdb(zs->zs_guid);
 		ztest_readonly();
+		ztest_run_zdb(zs->zs_guid);
+		ztest_make_writeable();
 		ztest_run_zdb(zs->zs_guid);
 	}
 
@@ -8807,7 +9001,7 @@ make_random_pool_props(void)
 
 /*
  * Create a storage pool with the given name and initial vdev size.
- * Then test spa_freeze() and spa_make_readonly() functionality.
+ * Then test spa_freeze(), spa_make_readonly(), and spa_make_writeable().
  */
 static void
 ztest_init(ztest_shared_t *zs)
@@ -8886,6 +9080,8 @@ ztest_init(ztest_shared_t *zs)
 		ztest_freeze();
 		ztest_run_zdb(zs->zs_guid);
 		ztest_readonly();
+		ztest_run_zdb(zs->zs_guid);
+		ztest_make_writeable();
 		ztest_run_zdb(zs->zs_guid);
 	}
 

@@ -29,7 +29,8 @@ tags = ['functional', 'readonly']
 tests = ['zpool_set_readonly_001_pos', 'zpool_set_readonly_002_pos',
     'zpool_set_readonly_003_pos', 'zpool_set_readonly_004_pos',
     'zpool_set_readonly_005_pos', 'zpool_set_readonly_006_pos',
-    'zpool_set_readonly_007_pos',
+    'zpool_set_readonly_007_pos', 'zpool_set_readonly_008_pos',
+    'zpool_set_readonly_009_pos',
     'zpool_set_readonly_001_neg',
     'zpool_set_readonly_003_neg', 'zpool_set_readonly_004_neg',
     'zpool_set_readonly_005_neg']

@@ -1259,6 +1259,8 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/cli_root/zpool_set/zpool_set_readonly_005_pos.ksh \
 	functional/cli_root/zpool_set/zpool_set_readonly_006_pos.ksh \
 	functional/cli_root/zpool_set/zpool_set_readonly_007_pos.ksh \
+	functional/cli_root/zpool_set/zpool_set_readonly_008_pos.ksh \
+	functional/cli_root/zpool_set/zpool_set_readonly_009_pos.ksh \
 	functional/cli_root/zpool_set/zpool_set_readonly_001_neg.ksh \
 	functional/cli_root/zpool_set/zpool_set_readonly_003_neg.ksh \
 	functional/cli_root/zpool_set/zpool_set_readonly_004_neg.ksh \
