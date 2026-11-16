@@ -34,10 +34,9 @@
  *     under sponsorship from the FreeBSD Foundation.
  * Copyright (c) 2021 Allan Jude
  * Copyright (c) 2021 Toomas Soome <tsoome@me.com>
- * Copyright (c) 2023, 2026, Klara Inc.
+ * Copyright (c) 2023, 2026 Klara Inc.
  * Copyright (c) 2023, Rob Norris <robn@despairlabs.com>
  * Copyright (c) 2026, TrueNAS.
- * Copyright 2026 Edgecast Cloud LLC.
  */
 
 #include <stdio.h>
@@ -46,6 +45,7 @@
 #include <ctype.h>
 #include <getopt.h>
 #include <openssl/evp.h>
+#include <pthread.h>
 #include <sys/zfs_context.h>
 #include <sys/spa.h>
 #include <sys/spa_impl.h>
@@ -118,6 +118,9 @@ enum {
 	ARG_FSCK,
 	ARG_FSCK_BRUTEFORCE,
 	ARG_FSCK_VERIFY_PARENT,
+	ARG_FSCK_ORPHAN_DIR_ENTRIES,
+	ARG_FSCK_THREADED,
+	ARG_FSCK_USE_BITMAP,
 	ARG_GITREV,
 };
 
@@ -143,6 +146,13 @@ static spa_t *spa;
 static objset_t *os;
 static boolean_t kernel_init_done;
 static boolean_t corruption_found = B_FALSE;
+
+static uint64_t fsck_bitmap_size = 0ULL;
+static uint64_t *fsck_obj_bitmap = NULL;
+static uint64_t *fsck_dir_bitmap = NULL;
+
+static pthread_t metadata_integrity_thread_id = 0;
+static int	 metadata_integrity_thread_pipe[2];
 
 static enum {
 	BIN_AUTO = 0,
@@ -1455,10 +1465,10 @@ dump_zpldir(objset_t *os, uint64_t object, void *data, size_t size)
 	zap_attribute_free(attrp);
 }
 
-static uint64_t
+static int
 get_dtl_refcount(vdev_t *vd)
 {
-	uint64_t refcount = 0;
+	int refcount = 0;
 
 	if (vd->vdev_ops->vdev_op_leaf) {
 		space_map_t *sm = vd->vdev_dtl_sm;
@@ -1474,10 +1484,10 @@ get_dtl_refcount(vdev_t *vd)
 	return (refcount);
 }
 
-static uint64_t
+static int
 get_metaslab_refcount(vdev_t *vd)
 {
-	uint64_t refcount = 0;
+	int refcount = 0;
 
 	if (vd->vdev_top == vd) {
 		for (uint64_t m = 0; m < vd->vdev_ms_count; m++) {
@@ -1494,11 +1504,11 @@ get_metaslab_refcount(vdev_t *vd)
 	return (refcount);
 }
 
-static uint64_t
+static int
 get_obsolete_refcount(vdev_t *vd)
 {
 	uint64_t obsolete_sm_object;
-	uint64_t refcount = 0;
+	int refcount = 0;
 
 	VERIFY0(vdev_obsolete_sm_object(vd, &obsolete_sm_object));
 	if (vd->vdev_top == vd && obsolete_sm_object != 0) {
@@ -1519,7 +1529,7 @@ get_obsolete_refcount(vdev_t *vd)
 	return (refcount);
 }
 
-static uint64_t
+static int
 get_prev_obsolete_spacemap_refcount(spa_t *spa)
 {
 	uint64_t prev_obj =
@@ -1534,10 +1544,10 @@ get_prev_obsolete_spacemap_refcount(spa_t *spa)
 	return (0);
 }
 
-static uint64_t
+static int
 get_checkpoint_refcount(vdev_t *vd)
 {
-	uint64_t refcount = 0;
+	int refcount = 0;
 
 	if (vd->vdev_top == vd && vd->vdev_top_zap != 0 &&
 	    zap_contains(spa_meta_objset(vd->vdev_spa),
@@ -1550,7 +1560,7 @@ get_checkpoint_refcount(vdev_t *vd)
 	return (refcount);
 }
 
-static uint64_t
+static int
 get_log_spacemap_refcount(spa_t *spa)
 {
 	return (avl_numnodes(&spa->spa_sm_logs_by_txg));
@@ -1560,37 +1570,23 @@ static int
 verify_spacemap_refcounts(spa_t *spa)
 {
 	uint64_t expected_refcount = 0;
-	uint64_t actual_refcount = 0;
-	uint64_t dtl_refcount, metaslab_refcount, obsolete_refcount,
-	    prev_obsolete_refcount, checkpoint_refcount, log_spacemap_refcount;
+	uint64_t actual_refcount;
 
 	(void) feature_get_refcount(spa,
 	    &spa_feature_table[SPA_FEATURE_SPACEMAP_HISTOGRAM],
 	    &expected_refcount);
-	dtl_refcount = get_dtl_refcount(spa->spa_root_vdev);
-	metaslab_refcount = get_metaslab_refcount(spa->spa_root_vdev);
-	obsolete_refcount = get_obsolete_refcount(spa->spa_root_vdev);
-	prev_obsolete_refcount = get_prev_obsolete_spacemap_refcount(spa);
-	checkpoint_refcount = get_checkpoint_refcount(spa->spa_root_vdev);
-	log_spacemap_refcount = get_log_spacemap_refcount(spa);
-	actual_refcount = dtl_refcount + metaslab_refcount +
-	    obsolete_refcount + prev_obsolete_refcount +
-	    checkpoint_refcount + log_spacemap_refcount;
+	actual_refcount = get_dtl_refcount(spa->spa_root_vdev);
+	actual_refcount += get_metaslab_refcount(spa->spa_root_vdev);
+	actual_refcount += get_obsolete_refcount(spa->spa_root_vdev);
+	actual_refcount += get_prev_obsolete_spacemap_refcount(spa);
+	actual_refcount += get_checkpoint_refcount(spa->spa_root_vdev);
+	actual_refcount += get_log_spacemap_refcount(spa);
 
 	if (expected_refcount != actual_refcount) {
-		(void) printf("space map refcount mismatch: expected %llu != "
-		    "actual %llu\n",
-		    (u_longlong_t)expected_refcount,
-		    (u_longlong_t)actual_refcount);
-		(void) printf("\tDTL: %llu, metaslab: %llu, obsolete: %llu, "
-		    "prev obsolete: %llu, checkpoint: %llu, "
-		    "log spacemap: %llu\n",
-		    (u_longlong_t)dtl_refcount,
-		    (u_longlong_t)metaslab_refcount,
-		    (u_longlong_t)obsolete_refcount,
-		    (u_longlong_t)prev_obsolete_refcount,
-		    (u_longlong_t)checkpoint_refcount,
-		    (u_longlong_t)log_spacemap_refcount);
+		(void) printf("space map refcount mismatch: expected %lld != "
+		    "actual %lld\n",
+		    (longlong_t)expected_refcount,
+		    (longlong_t)actual_refcount);
 		return (2);
 	}
 	return (0);
@@ -10002,8 +9998,6 @@ metadata_scan_dir_contains_object(objset_t *os, uint64_t dir_obj,
 		file = strrchr(path, '/');
 		file = file ? &file[1] : path;
 
-		printf("Check '%s' (%s)\n", path, file);
-
 		return (!zap_contains(os, dir_obj, file));
 	}
 
@@ -10115,7 +10109,6 @@ metadata_scan_object_contains_object(objset_t *os, uint64_t object,
 	if (!dnode_held &&
 	    (ZDB_OT_TYPE(doi.doi_bonus_type) == DMU_OT_SA) &&
 	    (doi.doi_type == DMU_OT_DIRECTORY_CONTENTS)) {
-		printf("dco:\n");
 		ret = metadata_scan_dir_contains_object(os, object, needle);
 	}
 
@@ -10167,7 +10160,7 @@ metadata_scan_objset_references_object(objset_t *os, uint64_t needle)
 			}
 		}
 
-		return (0);
+		return (B_FALSE);
 	}
 
 	SA_GRAB_ATTR(PARENT, &parent, 8); /* #defined above */
@@ -10386,25 +10379,11 @@ out:
 static void
 metadata_scan_znode(objset_t *os, uint64_t object)
 {
-	struct {
-		char	 path[MAXPATHLEN * 2]; /* allow xattr/failure prefix */
-		char	 link_target[MAXPATHLEN];
-		uint64_t xattr;
-		uint64_t rdev;
-		uint64_t project_id;
-		uint64_t gen;
-		uint64_t uid;
-		uint64_t gid;
-		uint64_t mode;
-		uint64_t file_size;
-		uint64_t parent;
-		uint64_t links;
-		uint64_t project_flags;
-		uint64_t create_time[2];
-		uint64_t access_time[2];
-		uint64_t modify_time[2];
-		uint64_t change_time[2];
-	} data = {0};
+	char	 path[MAXPATHLEN * 2]; /* allow xattr/failure prefix */
+	char	 link_target[MAXPATHLEN];
+	uint64_t mode;
+	uint64_t parent;
+	uint64_t links;
 
 	sa_handle_t *sa_handle;
 	sa_bulk_attr_t bulk[12];
@@ -10416,56 +10395,47 @@ metadata_scan_znode(objset_t *os, uint64_t object)
 		return;
 	}
 
-	SA_GRAB_ATTR(UID,    &data.uid,		   8);
-	SA_GRAB_ATTR(GID,    &data.gid,		   8);
-	SA_GRAB_ATTR(LINKS,  &data.links,	   8);
-	SA_GRAB_ATTR(GEN,    &data.gen,		   8);
-	SA_GRAB_ATTR(MODE,   &data.mode,	   8);
-	SA_GRAB_ATTR(PARENT, &data.parent,	   8);
-	SA_GRAB_ATTR(SIZE,   &data.file_size,	   8);
-	SA_GRAB_ATTR(ATIME,   data.access_time,	  16);
-	SA_GRAB_ATTR(MTIME,   data.modify_time,	  16);
-	SA_GRAB_ATTR(CRTIME,  data.create_time,	  16);
-	SA_GRAB_ATTR(CTIME,   data.change_time,	  16);
-	SA_GRAB_ATTR(FLAGS,  &data.project_flags,  8);
+	SA_GRAB_ATTR(LINKS, &links, 8);
+	SA_GRAB_ATTR(MODE, &mode, 8);
+	SA_GRAB_ATTR(PARENT, &parent, 8);
 
 	if (sa_bulk_lookup(sa_handle, bulk, idx)) {
 		sa_handle_destroy(sa_handle);
 		return;
 	}
 
-	switch (zfs_obj_to_path(os, object, data.path, sizeof (data.path))) {
+	switch (zfs_obj_to_path(os, object, path, sizeof (path))) {
 	case 0:
 		break;
 
 	case ESTALE:
-		snprintf(data.path, sizeof (data.path), "on delete queue");
+		snprintf(path, sizeof (path), "on delete queue");
 		break;
 
 	default:
-		snprintf(data.path, sizeof (data.path),
+		snprintf(path, sizeof (path),
 		    "path not found, possibly leaked");
 	}
 
-	if (S_ISLNK(data.mode)) {
+	if (S_ISLNK(mode)) {
 		int symlink_size = 0;
 
 		if ((!sa_size(sa_handle, sa_attr_table[ZPL_SYMLINK],
 		    &symlink_size) && symlink_size) &&
-		    (symlink_size < sizeof (data.link_target))) {
-			data.link_target[symlink_size] = '\0';
+		    (symlink_size < sizeof (link_target))) {
+			link_target[symlink_size] = '\0';
 
 			if (sa_lookup(sa_handle, sa_attr_table[ZPL_SYMLINK],
-			    &data.link_target, symlink_size) != 0) {
-				data.link_target[0] = 0; /* Failed, zero it. */
+			    &link_target, symlink_size) != 0) {
+				link_target[0] = 0; /* Failed, zero it. */
 			}
 		}
 	}
 
-	printf("id: %12ld parent: %12ld path: \"%s\"", object, data.parent,
-	    data.path);
-	if (S_ISLNK(data.mode)) {
-		printf(" target: '%s'", data.link_target);
+	printf("id: %12ld parent: %12ld path: \"%s\"", object, parent,
+	    path);
+	if (S_ISLNK(mode)) {
+		printf(" target: '%s'", link_target);
 	}
 	printf("\n");
 
@@ -10567,7 +10537,8 @@ metadata_scan_object(objset_t *os, uint64_t object, int verbosity)
 			 * If it's a directory, check for orphan dir entries.
 			 */
 
-			if (doi.doi_type == DMU_OT_DIRECTORY_CONTENTS) {
+			if (dump_opt[ARG_FSCK_ORPHAN_DIR_ENTRIES] &&
+			    doi.doi_type == DMU_OT_DIRECTORY_CONTENTS) {
 				metadata_scan_objset_contains_object(os,
 				    object);
 				metadata_scan_dir(os, object, verbosity);
@@ -10586,6 +10557,150 @@ metadata_scan_object(objset_t *os, uint64_t object, int verbosity)
 
 	if (db != NULL) dmu_buf_rele(db, FTAG);
 	if (dnode_held) dnode_rele(dn, FTAG);
+}
+
+static void
+fsck_obj_bit_set(uint64_t object)
+{
+	uint64_t oid = ZFS_DIRENT_OBJ(object);
+
+	if (oid >= (fsck_bitmap_size << 3)) {
+		printf("[FSCK] Ignoring %lu, too big for bitmap.\n", oid);
+		return;
+	}
+
+	fsck_obj_bitmap[oid >> 6] |= (1ULL << (oid & 63));
+}
+
+static void
+fsck_dir_bit_set(uint64_t object)
+{
+	uint64_t oid = ZFS_DIRENT_OBJ(object);
+
+	if (oid >= (fsck_bitmap_size << 3)) {
+		printf("[FSCK] Ignoring %lu, too big for bitmap.\n", oid);
+		return;
+	}
+
+	fsck_dir_bitmap[oid >> 6] |= (1ULL << (oid & 63));
+}
+
+static void
+metadata_populate_bitmaps_for_dir(objset_t *os, uint64_t dir_obj, int verbosity)
+{
+	zap_cursor_t zc;
+	zap_attribute_t *attrp = zap_attribute_long_alloc();
+	int cursor_error = 0;
+	int zl_error = 0;
+
+	if (verbosity >= 5) {
+		printf("Checking dir: %lu\n", dir_obj);
+	}
+
+	for (zap_cursor_init(&zc, os, dir_obj);
+	    0 == (cursor_error = zap_cursor_retrieve(&zc, attrp));
+	    zap_cursor_advance(&zc)) {
+		if (attrp->za_num_integers != 1 ||
+		    attrp->za_integer_length != sizeof (uint64_t)) {
+			printf("Unexpected: num_integers = %lu,"
+			    " integer_length = %u\n",
+			    attrp->za_num_integers,
+			    attrp->za_integer_length);
+			continue;
+		}
+		uint64_t oid;
+
+		zl_error = zap_lookup(os, dir_obj, attrp->za_name,
+		    attrp->za_integer_length, attrp->za_num_integers, &oid);
+
+		if (zl_error) {
+			printf("zap_lookup() returned %d\n", zl_error);
+			goto out;
+		}
+
+		fsck_dir_bit_set(oid);
+	}
+
+	if (cursor_error != ENOENT) {
+		printf("Possible corrupt directory %lu?\n"
+		    "\tzap_cursor_retrieve() returned %d\n\t\"%s\"\n",
+		    dir_obj, cursor_error, strerror(cursor_error));
+	}
+
+out:
+	zap_cursor_fini(&zc);
+	zap_attribute_free(attrp);
+}
+
+static void
+metadata_populate_bitmaps_for_object(objset_t *os, uint64_t object,
+    int verbosity)
+{
+	dmu_buf_t *db = NULL;
+	dmu_object_info_t doi;
+	dnode_t *dn;
+	boolean_t dnode_held = B_FALSE;
+	int error;
+
+	if (object == 0) {
+		dn = DMU_META_DNODE(os);
+		dmu_object_info_from_dnode(dn, &doi);
+	} else {
+		/*
+		 * Encrypted datasets will have sensitive bonus buffers
+		 * encrypted. Therefore we cannot hold the bonus buffer and
+		 * must hold the dnode itself instead.
+		 */
+		error = dmu_object_info(os, object, &doi);
+		if (error)
+			fatal("dmu_object_info() failed, errno %u", error);
+
+		if (!key_loaded && os->os_encrypted &&
+		    DMU_OT_IS_ENCRYPTED(doi.doi_bonus_type)) {
+			error = dnode_hold(os, object, FTAG, &dn);
+			if (error)
+				fatal("dnode_hold() failed, errno %u", error);
+			dnode_held = B_TRUE;
+		} else {
+			error = dmu_bonus_hold(os, object, FTAG, &db);
+			if (error)
+				fatal("dmu_bonus_hold(%llu) failed, errno %u",
+				    object, error);
+			dn = DB_DNODE((dmu_buf_impl_t *)db);
+		}
+	}
+
+	if (!dnode_held && ZDB_OT_TYPE(doi.doi_bonus_type) == DMU_OT_SA) {
+		switch (doi.doi_type) {
+		case DMU_OT_PLAIN_FILE_CONTENTS: /* UINT8 */
+			fsck_obj_bit_set(object);
+			break;
+
+		case DMU_OT_DIRECTORY_CONTENTS:	 /* ZAP */
+			fsck_obj_bit_set(object);
+			metadata_populate_bitmaps_for_dir(os, object,
+			    verbosity);
+			break;
+
+		default:
+			break;
+		}
+
+	}
+
+	if (db != NULL) dmu_buf_rele(db, FTAG);
+	if (dnode_held) dnode_rele(dn, FTAG);
+}
+
+static boolean_t
+metadata_check_path(objset_t *os, uint64_t obj, char *path, int size)
+{
+	if (zfs_obj_to_path(os, obj, path, size)) {
+		strcpy(path, "[Unknown]");
+	} else if (strcmp("/", path)) {
+		return (B_FALSE);
+	}
+	return (B_TRUE);
 }
 
 /*
@@ -10609,6 +10724,25 @@ metadata_integrity_scan(objset_t *os)
 	uint64_t scratch;
 	int verbosity = dump_opt['d'];
 	int error;
+
+	if (dump_opt[ARG_FSCK_USE_BITMAP]) {
+		if (!fsck_bitmap_size) {
+			fsck_bitmap_size = 1ULL << 27;
+		}
+
+		fsck_dir_bitmap = calloc(fsck_bitmap_size, 1);
+		fsck_obj_bitmap = calloc(fsck_bitmap_size, 1);
+
+		if (!fsck_dir_bitmap || !fsck_obj_bitmap) {
+			if (fsck_dir_bitmap) free(fsck_dir_bitmap);
+			if (fsck_obj_bitmap) free(fsck_obj_bitmap);
+			fsck_bitmap_size = 0;
+			dump_opt[ARG_FSCK_USE_BITMAP] = 0;
+			fprintf(stderr,
+			    "FSCK bitmap could not be allocated.\n");
+			exit(1);
+		}
+	}
 
 	dsl_pool_config_enter(dmu_objset_pool(os), FTAG);
 	dmu_objset_fast_stat(os, &dds);
@@ -10634,6 +10768,77 @@ metadata_integrity_scan(objset_t *os)
 
 	dmu_objset_name(os, objset_name);
 
+#if 1
+	if (dump_opt[ARG_FSCK_USE_BITMAP]) {
+		for (uint64_t count = 0; (error = dmu_object_next(os, &object,
+		    B_FALSE, 0)) == 0; count++) {
+			metadata_populate_bitmaps_for_object(os, object,
+			    verbosity);
+
+			mi_progress.count = count;
+
+			if (verbosity > 3) {
+				metadata_integrity_progress(" top level");
+			}
+		}
+
+		for (uint64_t i = 0; i < (fsck_bitmap_size >> 6); i++) {
+			uint64_t diff = fsck_obj_bitmap[i] ^ fsck_dir_bitmap[i];
+
+			if (diff) {
+				char path[MAXPATHLEN * 2];
+
+				for (int j = 0; j < 64; j++) {
+					uint64_t bit = (1ULL << j);
+					uint64_t obj = ((i << 6) | j);
+
+					if ((diff & bit) &&
+					    metadata_check_path(os, obj, path,
+					    sizeof (path))) {
+						if (fsck_obj_bitmap[i] & bit) {
+							printf("Orphan File    "
+							    "  @ %lu '%s'\n",
+							    obj, path);
+						} else {
+							printf("Orphan Dir Entr"
+							    "y @ %lu '%s'\n",
+							    obj, path);
+						}
+					}
+				}
+			}
+		}
+	} else {
+		for (uint64_t count = 0; (error = dmu_object_next(os, &object,
+		    B_FALSE, 0)) == 0; count++) {
+			if (dump_opt[ARG_FSCK_THREADED]) {
+				if (write(metadata_integrity_thread_pipe[1],
+				    &object, sizeof (object))) {
+					metadata_scan_object(os, object,
+					    verbosity);
+				}
+			} else {
+				metadata_scan_object(os, object, verbosity);
+			}
+
+			mi_progress.count = count;
+
+			if (verbosity > 3) {
+				metadata_integrity_progress(" top level");
+			}
+		}
+	}
+
+	/*
+	 * The per-file scan thread may take much longer to complete than the
+	 * dataset scan in the main thread.
+	 */
+
+	if (dump_opt[ARG_FSCK_THREADED]) {
+		close(metadata_integrity_thread_pipe[1]);
+		pthread_join(metadata_integrity_thread_id, NULL);
+	}
+#else
 	if (verbosity > 3) {
 		uint64_t count;
 
@@ -10649,11 +10854,23 @@ metadata_integrity_scan(objset_t *os)
 			metadata_scan_object(os, object, verbosity);
 		}
 	}
+#endif
 
 	if (error != ESRCH) {
 		(void) fprintf(stderr, "dmu_object_next() = %d\n", error);
 		abort();
 	}
+}
+
+static void *metadata_integrity_file_thread(void *args __attribute((unused)))
+{
+	uint64_t oid;
+	int verbosity = dump_opt['d'];
+
+	while (read(metadata_integrity_thread_pipe[0], &oid, sizeof (oid))) {
+		metadata_scan_object(os, oid, verbosity);
+	}
+	return (NULL);
 }
 
 int
@@ -10771,6 +10988,12 @@ main(int argc, char **argv)
 		    ARG_FSCK_BRUTEFORCE },
 		{"fsck-verify-parent",	no_argument,		NULL,
 		    ARG_FSCK_VERIFY_PARENT },
+		{"fsck-orphan-dir-entries",	no_argument,		NULL,
+		    ARG_FSCK_ORPHAN_DIR_ENTRIES },
+		{"fsck-threaded",	no_argument,		NULL,
+		    ARG_FSCK_THREADED },
+		{"fsck-use-bitmap",	optional_argument,		NULL,
+		    ARG_FSCK_USE_BITMAP },
 		{"version",		no_argument,		NULL,
 		    ARG_GITREV},
 		{0, 0, 0, 0}
@@ -10948,6 +11171,25 @@ main(int argc, char **argv)
 			break;
 		case ARG_FSCK_VERIFY_PARENT:
 			dump_opt[ARG_FSCK_VERIFY_PARENT] = 1;
+			break;
+		case ARG_FSCK_ORPHAN_DIR_ENTRIES:
+			dump_opt[ARG_FSCK_ORPHAN_DIR_ENTRIES] = 1;
+			break;
+		case ARG_FSCK_THREADED:
+			dump_opt[ARG_FSCK_THREADED] = 1;
+			if (pthread_create(&metadata_integrity_thread_id, NULL,
+			    metadata_integrity_file_thread, NULL)) {
+				fprintf(stderr, "Error creating thread.\n");
+				exit(1);
+			}
+			if (pipe(metadata_integrity_thread_pipe)) {
+				fprintf(stderr, "Error creating pipe.\n");
+				exit(1);
+			}
+			break;
+		case ARG_FSCK_USE_BITMAP:
+			dump_opt[ARG_FSCK_USE_BITMAP] = 1;
+			/* printf("Optarg: '%s'\n", optarg); */
 			break;
 		case ARG_GITREV:
 			printf(ZFS_META_GITREV "\n");
